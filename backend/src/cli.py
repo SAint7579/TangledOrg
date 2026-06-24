@@ -73,14 +73,18 @@ def repos():
     table = Table(title=f"Your Tangled Repos ({len(repo_list)})")
     table.add_column("#", style="dim")
     table.add_column("Name", style="bold")
+    table.add_column("Knot", style="cyan")
     table.add_column("AT-URI", style="dim")
     for i, repo in enumerate(repo_list, 1):
-        name = ""
-        if hasattr(repo["value"], "name"):
-            name = repo["value"].name
-        elif isinstance(repo["value"], dict):
-            name = repo["value"].get("name", "")
-        table.add_row(str(i), name or "(unnamed)", repo["uri"])
+        uri = repo["uri"]
+        rkey = uri.rsplit("/", 1)[-1] if "/" in uri else ""
+        val = repo["value"]
+        knot = ""
+        if hasattr(val, "_data"):
+            knot = val._data.get("knot", "")
+        elif isinstance(val, dict):
+            knot = val.get("knot", "")
+        table.add_row(str(i), rkey, knot, uri)
 
     console.print(f"\n")
     console.print(table)
@@ -178,6 +182,118 @@ def list_records(collection_suffix: str):
         else:
             console.print(str(val))
         console.print("---")
+
+
+@main.command()
+@click.argument("name")
+@click.option("--description", "-d", default=None, help="Org description")
+def create_test_org(name: str, description: str | None):
+    """Create a test org and bind it to all your repos."""
+    client = get_client()
+    with console.status("Logging in..."):
+        did = client.login()
+
+    # Create org
+    org = Organization(
+        name=name,
+        description=description or f"Test organization for {name}",
+        ownerDid=did,
+        createdAt=datetime.now(timezone.utc),
+    )
+    with console.status(f"Creating organization '{name}'..."):
+        org_result = client.create_governance_record(org)
+
+    console.print(f"\n[green]Organization '{name}' created[/green]")
+    console.print(f"  URI: {org_result['uri']}\n")
+
+    # List repos and show how they'd link
+    with console.status("Fetching your repos..."):
+        repos = client.list_repos()
+
+    if repos:
+        console.print(f"[bold]Found {len(repos)} repo(s) to govern:[/bold]")
+        for r in repos:
+            val = r["value"]
+            repo_name = ""
+            if hasattr(val, "name"):
+                repo_name = val.name
+            elif isinstance(val, dict):
+                repo_name = val.get("name", "")
+            console.print(f"  • {repo_name or '(unnamed)'} → {r['uri']}")
+        console.print(
+            f"\nNext: create a RepoProfile for each repo to bind them to the org."
+        )
+    else:
+        console.print("[yellow]No repos found yet. Create one on tangled.org first.[/yellow]")
+
+
+@main.command()
+def inspect():
+    """Show full details of your Tangled repos and any governance records."""
+    client = get_client()
+    with console.status("Logging in..."):
+        did = client.login()
+
+    console.print(f"\n[bold]Account: {client._handle}[/bold]")
+    console.print(f"DID: {did}\n")
+
+    # Repos
+    with console.status("Fetching repos..."):
+        repos = client.list_repos()
+
+    table = Table(title=f"Tangled Repos ({len(repos)})")
+    table.add_column("Name", style="bold")
+    table.add_column("Knot", style="cyan")
+    table.add_column("Repo DID", style="dim")
+    table.add_column("AT-URI", style="dim")
+    for r in repos:
+        uri = r["uri"]
+        rkey = uri.rsplit("/", 1)[-1] if "/" in uri else ""
+        val = r["value"]
+        knot = ""
+        repo_did = ""
+        if hasattr(val, "_data"):
+            knot = val._data.get("knot", "")
+            repo_did = val._data.get("repoDid", "")
+        elif isinstance(val, dict):
+            knot = val.get("knot", "")
+            repo_did = val.get("repoDid", "")
+        table.add_row(rkey, knot, repo_did[:30] + "..." if len(repo_did) > 30 else repo_did, uri)
+    console.print(table)
+
+    # Governance records
+    collections = [
+        ("org.organization", "Organizations"),
+        ("org.membership", "Memberships"),
+        ("org.team", "Teams"),
+        ("compliance.repoProfile", "Repo Profiles"),
+        ("compliance.codeOwner", "Code Owners"),
+        ("compliance.incident", "Incidents"),
+        ("policy.policyPack", "Policy Packs"),
+        ("policy.repoBinding", "Repo Bindings"),
+        ("graph.codeDependency", "Code Dependencies"),
+        ("audit.agentRun", "Agent Runs"),
+    ]
+
+    console.print(f"\n[bold]Governance Records[/bold]")
+    found_any = False
+    for suffix, label in collections:
+        with console.status(f"Checking {label}..."):
+            result = client.list_governance_records(suffix)
+        count = len(result["records"])
+        if count > 0:
+            found_any = True
+            console.print(f"  [green]✓[/green] {label}: {count} record(s)")
+            for rec in result["records"]:
+                console.print(f"    └─ {rec['uri']}")
+        else:
+            console.print(f"  [dim]·[/dim] {label}: 0")
+
+    if not found_any:
+        console.print(
+            f"\n[yellow]No governance records yet.[/yellow] "
+            f"Use 'create-org' or 'create-test-org' to get started."
+        )
 
 
 if __name__ == "__main__":
