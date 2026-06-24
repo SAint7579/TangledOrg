@@ -1,6 +1,6 @@
 """FastAPI application for Tangled Org AppView."""
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -34,8 +34,8 @@ app.include_router(api.router)
 
 
 @app.get("/.well-known/atproto-client-metadata.json")
-async def client_metadata():
-    base_url = settings.backend_url or f"http://localhost:{settings.port}"
+async def client_metadata(request: Request):
+    base_url = settings.backend_url or str(request.base_url).rstrip("/")
     return JSONResponse(content=get_client_metadata(base_url))
 
 
