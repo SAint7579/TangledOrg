@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import {
   Shield,
   LayoutDashboard,
@@ -17,15 +18,12 @@ import {
 import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/ui/Avatar";
 import { useAuth } from "@/components/auth/AuthProvider";
-import { logout } from "@/lib/api";
-import { mockOrg } from "@/lib/mock-data";
+import { logout, fetchOrgs } from "@/lib/api";
 
 const navGroups = [
   {
     label: null,
-    items: [
-      { href: "/", label: "Dashboard", icon: LayoutDashboard },
-    ],
+    items: [{ href: "/", label: "Dashboard", icon: LayoutDashboard }],
   },
   {
     label: "Monitor",
@@ -54,9 +52,18 @@ const navGroups = [
 export function Sidebar() {
   const pathname = usePathname();
   const { user } = useAuth();
+  const [orgName, setOrgName] = useState<string>("");
 
   const displayHandle = user?.handle ?? "anonymous";
   const shortHandle = displayHandle.split(".")[0];
+
+  useEffect(() => {
+    fetchOrgs().then(res => {
+      if (res?.organizations?.length) {
+        setOrgName(res.organizations[0].displayName || res.organizations[0].name);
+      }
+    });
+  }, []);
 
   const handleLogout = async () => {
     await logout();
@@ -65,7 +72,6 @@ export function Sidebar() {
 
   return (
     <aside className="fixed left-0 top-0 h-screen w-[240px] flex flex-col bg-zinc-950 border-r border-zinc-800/70 z-40">
-      {/* Logo */}
       <div className="flex items-center gap-2.5 px-4 h-14 border-b border-zinc-800">
         <Shield size={14} className="text-blue-400 flex-shrink-0" strokeWidth={2} />
         <div className="flex flex-col">
@@ -78,7 +84,6 @@ export function Sidebar() {
         </div>
       </div>
 
-      {/* Navigation */}
       <nav className="flex-1 px-2 py-3 overflow-y-auto">
         {navGroups.map((group, gi) => {
           const isActive = (href: string) =>
@@ -135,14 +140,13 @@ export function Sidebar() {
           <div className="flex items-center gap-2">
             <Building2 size={11} className="text-zinc-600 flex-shrink-0" />
             <div className="flex-1 min-w-0">
-              <p className="text-xs font-medium text-zinc-300 truncate">{mockOrg.name}</p>
-              <p className="text-[10px] text-zinc-600 font-mono truncate">{mockOrg.handle.split(".")[0]}.tngl.sh</p>
+              <p className="text-xs font-medium text-zinc-300 truncate">{orgName || "No org"}</p>
+              <p className="text-[10px] text-zinc-600 font-mono truncate">{displayHandle}</p>
             </div>
           </div>
         </div>
       </nav>
 
-      {/* User footer */}
       <div className="border-t border-zinc-800 px-3 py-3">
         <div className="flex items-center gap-2.5">
           <Avatar displayName={shortHandle} size="sm" />

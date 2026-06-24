@@ -1,31 +1,60 @@
-import {
-  Building2,
-  Users,
-  FolderGit2,
-  GitPullRequest,
-  Clock,
-  Shield,
-} from "lucide-react";
+"use client";
+
+import { useEffect, useState } from "react";
+import { Building2, Users, FolderGit2, Shield } from "lucide-react";
 import { Shell } from "@/components/layout/Shell";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
-import { mockOrg, mockTeams, mockMembers } from "@/lib/mock-data";
-import { formatRelativeTime, cn } from "@/lib/utils";
+import { fetchOrgs, fetchMembers } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 const roleColors: Record<string, string> = {
-  owner: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+  "org-admin": "bg-red-500/10 text-red-400 border-red-500/20",
   admin: "bg-red-500/10 text-red-400 border-red-500/20",
+  owner: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+  contributor: "bg-blue-500/10 text-blue-400 border-blue-500/20",
   maintainer: "bg-blue-500/10 text-blue-400 border-blue-500/20",
   developer: "bg-zinc-500/10 text-zinc-400 border-zinc-500/20",
+  dpo: "bg-purple-500/10 text-purple-400 border-purple-500/20",
   viewer: "bg-zinc-700/30 text-zinc-500 border-zinc-700/30",
 };
 
 export default function OrgPage() {
+  const [orgData, setOrgData] = useState<any>(null);
+  const [membersData, setMembersData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchOrgs().then(async (orgsRes) => {
+      setOrgData(orgsRes);
+      const org = orgsRes?.organizations?.[0];
+      if (org) {
+        const rkey = org.id ?? org.rkey ?? "default";
+        const members = await fetchMembers(rkey);
+        setMembersData(members);
+      }
+      setLoading(false);
+    });
+  }, []);
+
+  if (loading) {
+    return (
+      <Shell breadcrumbs={[{ label: "Organization" }]}>
+        <div className="flex items-center justify-center h-64">
+          <span className="text-zinc-500 text-sm animate-pulse">Loading...</span>
+        </div>
+      </Shell>
+    );
+  }
+
+  const org = orgData?.organizations?.[0] ?? { name: "Your Org", description: "" };
+  const members = membersData?.members ?? [];
+  const teams = membersData?.teams ?? [];
+
   return (
     <Shell breadcrumbs={[{ label: "Organization" }]}>
       <div className="max-w-6xl mx-auto space-y-6">
-        {/* Org Header */}
         <Card>
           <div className="flex items-start gap-5">
             <div className="w-16 h-16 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center flex-shrink-0">
@@ -33,84 +62,68 @@ export default function OrgPage() {
             </div>
             <div className="flex-1">
               <div className="flex items-center gap-3 mb-1 flex-wrap">
-                <h1 className="text-2xl font-bold text-zinc-100">{mockOrg.name}</h1>
-                <code className="text-xs font-mono text-zinc-500">@{mockOrg.handle.split(".")[0]}</code>
-                <Badge variant="info" size="sm">AT Protocol Org</Badge>
+                <h1 className="text-2xl font-bold text-zinc-100">
+                  {org.name ?? org.handle}
+                </h1>
+                <code className="text-xs font-mono text-zinc-500">
+                  @{(org.handle ?? "").split(".")[0]}
+                </code>
+                <Badge variant="info" size="sm">
+                  AT Protocol Org
+                </Badge>
               </div>
-              <p className="text-sm text-zinc-400 mb-3">{mockOrg.description}</p>
-              <p className="text-[10px] font-mono text-zinc-600 mb-4">{mockOrg.did}</p>
+              <p className="text-sm text-zinc-400 mb-3">
+                {org.description ?? ""}
+              </p>
+              {org.did && (
+                <p className="text-[10px] font-mono text-zinc-600 mb-4">
+                  {org.did}
+                </p>
+              )}
               <div className="flex items-center gap-6 text-sm text-zinc-400">
                 <span className="flex items-center gap-1.5">
-                  <FolderGit2 size={13} className="text-zinc-500" />
-                  <strong className="text-zinc-200">{mockOrg.stats.repos}</strong> repos
-                </span>
-                <span className="flex items-center gap-1.5">
                   <Users size={13} className="text-zinc-500" />
-                  <strong className="text-zinc-200">{mockOrg.stats.members}</strong> members
+                  <strong className="text-zinc-200">{members.length}</strong>{" "}
+                  members
                 </span>
                 <span className="flex items-center gap-1.5">
                   <Shield size={13} className="text-zinc-500" />
-                  <strong className="text-zinc-200">{mockOrg.stats.teams}</strong> teams
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <GitPullRequest size={13} className="text-zinc-500" />
-                  <strong className="text-zinc-200">{mockOrg.stats.openPRs}</strong> open PRs
+                  <strong className="text-zinc-200">{teams.length}</strong> teams
                 </span>
               </div>
             </div>
           </div>
         </Card>
 
-        {/* Teams Grid */}
-        <div>
-          <h2 className="text-base font-semibold text-zinc-100 mb-3 flex items-center gap-2">
-            <Users size={15} className="text-zinc-400" />
-            Teams
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {mockTeams.map((team) => {
-              const teamMembers = mockMembers.filter((m) => team.members.includes(m.id));
-              return (
-                <Card key={team.id}>
+        {teams.length > 0 && (
+          <div>
+            <h2 className="text-base font-semibold text-zinc-100 mb-3 flex items-center gap-2">
+              <Users size={15} className="text-zinc-400" />
+              Teams
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {teams.map((team: any) => (
+                <Card key={team.id ?? team.name}>
                   <CardHeader
                     title={team.name}
-                    description={`@${team.slug}`}
-                    action={
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[10px] text-zinc-500 font-mono">{team.repoCount} repos</span>
-                      </div>
-                    }
+                    description={team.slug ? `@${team.slug}` : ""}
                   />
-                  <p className="text-xs text-zinc-500 mb-3 leading-relaxed">{team.description}</p>
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex -space-x-1.5">
-                      {teamMembers.slice(0, 4).map((m) => (
-                        <Avatar
-                          key={m.id}
-                          displayName={m.displayName}
-                          size="xs"
-                          className="ring-2 ring-zinc-900"
-                        />
-                      ))}
-                      {teamMembers.length > 4 && (
-                        <span className="flex items-center justify-center w-5 h-5 rounded-full bg-zinc-700 text-[9px] text-zinc-300 ring-2 ring-zinc-900 font-medium">
-                          +{teamMembers.length - 4}
-                        </span>
-                      )}
-                    </div>
-                    <span className="text-xs text-zinc-500">{team.memberCount} members</span>
-                  </div>
+                  {team.description && (
+                    <p className="text-xs text-zinc-500 mb-3 leading-relaxed">
+                      {team.description}
+                    </p>
+                  )}
                   <div className="flex items-center gap-2">
-                    <Badge variant="neutral" size="sm">{team.repoCount} repos</Badge>
-                    <Badge variant="info" size="sm">{team.memberCount} members</Badge>
+                    <Badge variant="info" size="sm">
+                      {team.memberCount ?? team.members?.length ?? 0} members
+                    </Badge>
                   </div>
                 </Card>
-              );
-            })}
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
-        {/* Members Table */}
         <div>
           <h2 className="text-base font-semibold text-zinc-100 mb-3 flex items-center gap-2">
             <Users size={15} className="text-zinc-400" />
@@ -132,56 +145,68 @@ export default function OrgPage() {
                   <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider hidden lg:table-cell">
                     DID
                   </th>
-                  <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider hidden sm:table-cell">
-                    Approvals
-                  </th>
-                  <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider">
-                    Last Active
-                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/40">
-                {mockMembers.map((member) => {
-                  const memberTeams = mockTeams.filter((t) => member.teams.includes(t.id));
+                {members.map((member: any) => {
+                  const roleName =
+                    member.role?.name ?? member.role?.slug ?? member.role ?? "—";
+                  const roleSlug =
+                    member.role?.slug ?? member.role ?? "contributor";
+                  const memberTeams = member.teams ?? [];
                   return (
-                    <tr key={member.id} className="hover:bg-zinc-800/20 transition-colors">
+                    <tr
+                      key={member.id ?? member.did}
+                      className="hover:bg-zinc-800/20 transition-colors"
+                    >
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2.5">
-                          <Avatar displayName={member.displayName} size="sm" />
+                          <Avatar
+                            displayName={
+                              member.displayName ?? member.handle ?? member.did
+                            }
+                            size="sm"
+                          />
                           <div>
-                            <p className="text-sm font-medium text-zinc-200">{member.displayName}</p>
-                            <p className="text-[10px] font-mono text-zinc-500">@{member.handle.split(".")[0]}</p>
+                            <p className="text-sm font-medium text-zinc-200">
+                              {member.displayName ?? member.handle ?? "Unknown"}
+                            </p>
+                            <p className="text-[10px] font-mono text-zinc-500">
+                              {member.handle
+                                ? `@${member.handle.split(".")[0]}`
+                                : member.did?.substring(0, 20)}
+                            </p>
                           </div>
                         </div>
                       </td>
                       <td className="px-4 py-3">
-                        <span className={cn(
-                          "text-[10px] px-1.5 py-0.5 rounded border font-mono font-semibold uppercase tracking-wider",
-                          roleColors[member.role]
-                        )}>
-                          {member.role}
+                        <span
+                          className={cn(
+                            "text-[10px] px-1.5 py-0.5 rounded border font-mono font-semibold uppercase tracking-wider",
+                            roleColors[roleSlug] ??
+                              "bg-zinc-500/10 text-zinc-400 border-zinc-600/30"
+                          )}
+                        >
+                          {roleName}
                         </span>
                       </td>
                       <td className="px-4 py-3 hidden md:table-cell">
                         <div className="flex flex-wrap gap-1">
-                          {memberTeams.map((t) => (
-                            <Badge key={t.id} variant="neutral" size="sm">@{t.slug}</Badge>
+                          {memberTeams.map((t: any) => (
+                            <Badge
+                              key={t.id ?? t.name ?? t}
+                              variant="neutral"
+                              size="sm"
+                            >
+                              {typeof t === "string" ? t : `@${t.slug ?? t.name}`}
+                            </Badge>
                           ))}
                         </div>
                       </td>
                       <td className="px-4 py-3 hidden lg:table-cell">
                         <code className="text-[10px] font-mono text-zinc-600">
-                          {member.did.substring(0, 20)}...
+                          {(member.did ?? "").substring(0, 20)}...
                         </code>
-                      </td>
-                      <td className="px-4 py-3 text-right hidden sm:table-cell">
-                        <span className="text-sm font-mono text-zinc-300">{member.approvalCount}</span>
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <span className="flex items-center gap-1 justify-end text-xs text-zinc-500">
-                          <Clock size={10} />
-                          {formatRelativeTime(member.lastActive)}
-                        </span>
                       </td>
                     </tr>
                   );

@@ -2,7 +2,7 @@
 
 import { Search, Bell, ChevronRight } from "lucide-react";
 import { Avatar } from "@/components/ui/Avatar";
-import { mockMembers } from "@/lib/mock-data";
+import { useAuth } from "@/components/auth/AuthProvider";
 
 interface BreadcrumbItem {
   label: string;
@@ -14,12 +14,12 @@ interface HeaderProps {
   notificationCount?: number;
 }
 
-const currentUser = mockMembers[0];
+export function Header({ breadcrumbs = [], notificationCount = 0 }: HeaderProps) {
+  const { user } = useAuth();
+  const displayName = user?.handle?.split(".")[0] ?? "user";
 
-export function Header({ breadcrumbs = [], notificationCount = 3 }: HeaderProps) {
   return (
     <header className="sticky top-0 z-30 h-14 flex items-center gap-4 px-6 bg-zinc-950/90 backdrop-blur border-b border-zinc-800/70">
-      {/* Breadcrumbs */}
       <nav className="flex items-center gap-1 text-sm flex-1 min-w-0">
         <span className="text-zinc-500 font-medium text-xs">Tangled Org</span>
         {breadcrumbs.map((crumb, i) => (
@@ -34,19 +34,16 @@ export function Header({ breadcrumbs = [], notificationCount = 3 }: HeaderProps)
         ))}
       </nav>
 
-      {/* Right side */}
       <div className="flex items-center gap-3 flex-shrink-0">
-        {/* Search */}
         <div className="relative hidden md:flex items-center">
           <Search size={13} className="absolute left-2.5 text-zinc-600" />
           <input
             type="text"
-            placeholder="Search repos, PRs, policies..."
+            placeholder="Search repos, policies..."
             className="w-56 bg-zinc-900 border border-zinc-800 rounded-md pl-8 pr-3 py-1.5 text-xs text-zinc-300 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-blue-500/50 focus:border-zinc-700 transition-all"
           />
         </div>
 
-        {/* Notifications */}
         <button className="relative p-1.5 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors">
           <Bell size={16} />
           {notificationCount > 0 && (
@@ -56,8 +53,7 @@ export function Header({ breadcrumbs = [], notificationCount = 3 }: HeaderProps)
           )}
         </button>
 
-        {/* Avatar */}
-        <Avatar displayName={currentUser.displayName} size="sm" />
+        <Avatar displayName={displayName} size="sm" />
       </div>
     </header>
   );
