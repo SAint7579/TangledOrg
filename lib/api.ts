@@ -101,6 +101,16 @@ export async function fetchPolicies() {
   return apiFetch<{ policyPacks: any[] }>("/api/policies");
 }
 
+export async function createPolicyPack(body: {
+  orgUri: string; name: string; description?: string;
+  framework?: string; version?: string;
+  controls?: { controlId: string; name: string; description?: string;
+    checkType?: string; enforcement?: string; severity?: string;
+    scanTool?: string; isoReference?: string; }[];
+}) {
+  return apiPost("/api/policies", body);
+}
+
 export async function createPolicyBinding(body: {
   repoUri: string; policyPackUri: string; enforcementOverride?: string;
 }) {

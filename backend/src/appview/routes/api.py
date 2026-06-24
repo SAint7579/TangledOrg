@@ -29,6 +29,32 @@ def _list_records(session: dict, collection: str) -> list[dict]:
     return records
 
 
+def _resolve_did_to_handle(pds_url: str, did: str) -> str:
+    """Resolve a DID to its handle via the PDS."""
+    import httpx
+
+    try:
+        resp = httpx.get(
+            f"{pds_url}/xrpc/com.atproto.repo.describeRepo",
+            params={"repo": did},
+            timeout=5,
+        )
+        if resp.status_code == 200:
+            return resp.json().get("handle", did)
+    except Exception:
+        pass
+    return did
+
+
+def _resolve_dids_batch(pds_url: str, dids: list[str]) -> dict[str, str]:
+    """Resolve multiple DIDs to handles. Returns {did: handle} map."""
+    result = {}
+    for did in set(dids):
+        if did:
+            result[did] = _resolve_did_to_handle(pds_url, did)
+    return result
+
+
 def _create_record(session: dict, collection: str, record: dict, rkey: str | None = None) -> dict:
     import httpx
 
@@ -94,13 +120,21 @@ async def list_members(rkey: str, request: Request):
     role_map = {r["uri"]: r["value"] for r in roles}
     team_map = {t["uri"]: t["value"] for t in teams}
 
-    members = []
+    filtered = []
     for m in memberships:
         val = m["value"]
         org_uri = val.get("org", "")
         if rkey != "all" and org_uri_suffix not in org_uri:
             continue
+        filtered.append(m)
 
+    member_dids = [m["value"].get("memberDid", "") for m in filtered]
+    handle_map = _resolve_dids_batch(session["pds_issuer"], member_dids)
+
+    members = []
+    for m in filtered:
+        val = m["value"]
+        did = val.get("memberDid", "")
         role_data = role_map.get(val.get("role", ""), {})
         member_teams = []
         for team_uri in (val.get("teams") or []):
@@ -110,8 +144,8 @@ async def list_members(rkey: str, request: Request):
 
         members.append({
             "id": m["rkey"], "uri": m["uri"],
-            "did": val.get("memberDid", ""),
-            "handle": "",
+            "did": did,
+            "handle": handle_map.get(did, did),
             "role": {"slug": role_data.get("slug", ""), "name": role_data.get("name", "")},
             "teams": member_teams,
             "invitedBy": val.get("invitedBy"),
@@ -238,6 +272,55 @@ async def list_policies(request: Request):
         })
 
     return {"policyPacks": policy_packs}
+
+
+class PolicyPackCreate(BaseModel):
+    orgUri: str
+    name: str
+    description: Optional[str] = None
+    framework: str = "custom"
+    version: str = "1.0"
+    controls: Optional[list[dict]] = None
+
+
+@router.post("/policies")
+async def create_policy_pack(body: PolicyPackCreate, request: Request):
+    """Create a new policy pack and optionally its controls."""
+    session = get_authenticated_session(request)
+    now = datetime.now(timezone.utc).isoformat()
+    record = {
+        "org": body.orgUri,
+        "name": body.name,
+        "displayName": body.name,
+        "framework": body.framework,
+        "version": body.version,
+        "createdAt": now,
+    }
+    if body.description:
+        record["description"] = body.description
+
+    pack_result = _create_record(session, "sh.tangled.governance.policy.policyPack", record)
+    pack_uri = pack_result.get("uri", "")
+
+    created_controls = []
+    for ctrl in (body.controls or []):
+        ctrl_record = {
+            "policyPack": pack_uri,
+            "controlId": ctrl.get("controlId", ""),
+            "name": ctrl.get("name", ""),
+            "description": ctrl.get("description", ""),
+            "checkType": ctrl.get("checkType", "automated"),
+            "enforcement": ctrl.get("enforcement", "warn"),
+            "severity": ctrl.get("severity", "medium"),
+        }
+        if ctrl.get("scanTool"):
+            ctrl_record["scanTool"] = ctrl["scanTool"]
+        if ctrl.get("isoReference"):
+            ctrl_record["isoReference"] = ctrl["isoReference"]
+        result = _create_record(session, "sh.tangled.governance.policy.control", ctrl_record)
+        created_controls.append(result)
+
+    return {"pack": pack_result, "controls": created_controls}
 
 
 class PolicyBindingCreate(BaseModel):

@@ -8,11 +8,13 @@ import {
   User,
   ChevronRight,
   BookOpen,
+  Plus,
+  X,
 } from "lucide-react";
 import { Shell } from "@/components/layout/Shell";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
-import { fetchPolicies, fetchRepos, createPolicyBinding } from "@/lib/api";
+import { fetchPolicies, fetchRepos, fetchOrgs, createPolicyBinding, createPolicyPack } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const frameworkColors: Record<string, string> = {
@@ -26,19 +28,42 @@ const frameworkColors: Record<string, string> = {
 
 const severityOrder = ["critical", "high", "medium", "low", "info"] as const;
 
+const FRAMEWORKS = [
+  { value: "iso-27001", label: "ISO 27001" },
+  { value: "gdpr", label: "GDPR" },
+  { value: "eu-ai-act", label: "EU AI Act" },
+  { value: "soc2", label: "SOC 2" },
+  { value: "hipaa", label: "HIPAA" },
+  { value: "pci-dss", label: "PCI DSS" },
+  { value: "custom", label: "Custom" },
+];
+
 export default function PoliciesPage() {
   const [policiesData, setPoliciesData] = useState<any>(null);
   const [reposData, setReposData] = useState<any>(null);
+  const [orgUri, setOrgUri] = useState("");
   const [loading, setLoading] = useState(true);
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [showBindForm, setShowBindForm] = useState(false);
   const [bindRepoUri, setBindRepoUri] = useState("");
   const [binding, setBinding] = useState(false);
 
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [newPack, setNewPack] = useState({
+    name: "", description: "", framework: "custom", version: "1.0",
+  });
+  const [newControls, setNewControls] = useState<{
+    controlId: string; name: string; description: string;
+    checkType: string; enforcement: string; severity: string;
+  }[]>([]);
+
   useEffect(() => {
-    Promise.all([fetchPolicies(), fetchRepos()]).then(([policies, repos]) => {
+    Promise.all([fetchPolicies(), fetchRepos(), fetchOrgs()]).then(([policies, repos, orgs]) => {
       setPoliciesData(policies);
       setReposData(repos);
+      const org = orgs?.organizations?.[0];
+      if (org) setOrgUri(org.uri ?? "");
       setLoading(false);
     });
   }, []);
@@ -57,12 +82,47 @@ export default function PoliciesPage() {
   const repos = reposData?.repos ?? [];
   const selectedPack = policyPacks[selectedIdx] ?? policyPacks[0];
 
-  if (!selectedPack) {
+  async function handleCreatePack() {
+    if (!newPack.name.trim()) return;
+    setCreating(true);
+    await createPolicyPack({
+      orgUri,
+      name: newPack.name,
+      description: newPack.description || undefined,
+      framework: newPack.framework,
+      version: newPack.version,
+      controls: newControls.length > 0 ? newControls : undefined,
+    });
+    const res = await fetchPolicies();
+    setPoliciesData(res);
+    setShowCreateForm(false);
+    setNewPack({ name: "", description: "", framework: "custom", version: "1.0" });
+    setNewControls([]);
+    setCreating(false);
+    if (res?.policyPacks?.length) setSelectedIdx(res.policyPacks.length - 1);
+  }
+
+  function addControl() {
+    setNewControls([...newControls, {
+      controlId: `CTL-${newControls.length + 1}`,
+      name: "", description: "",
+      checkType: "automated", enforcement: "warn", severity: "medium",
+    }]);
+  }
+
+  if (!selectedPack && !showCreateForm) {
     return (
       <Shell breadcrumbs={[{ label: "Policies" }]}>
         <div className="max-w-5xl mx-auto text-center py-12">
           <Shield size={32} className="text-zinc-700 mx-auto mb-3" />
-          <p className="text-sm text-zinc-400">No policy packs found.</p>
+          <p className="text-sm text-zinc-400 mb-4">No policy packs found.</p>
+          <button
+            onClick={() => setShowCreateForm(true)}
+            className="text-xs font-mono px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors"
+          >
+            <Plus size={12} className="inline mr-1" />
+            Create Policy Pack
+          </button>
         </div>
       </Shell>
     );
@@ -88,17 +148,166 @@ export default function PoliciesPage() {
   return (
     <Shell breadcrumbs={[{ label: "Policies" }]}>
       <div className="max-w-7xl mx-auto space-y-6">
-        <div>
-          <h1 className="text-xl font-bold text-zinc-100">Policy Packs</h1>
-          <p className="text-sm text-zinc-500 mt-1">
-            {policyPacks.length} frameworks ·{" "}
-            {policyPacks.reduce(
-              (a: number, p: any) => a + (p.controlCount ?? p.controls?.length ?? 0),
-              0
-            )}{" "}
-            total controls
-          </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-bold text-zinc-100">Policy Packs</h1>
+            <p className="text-sm text-zinc-500 mt-1">
+              {policyPacks.length} frameworks ·{" "}
+              {policyPacks.reduce(
+                (a: number, p: any) => a + (p.controlCount ?? p.controls?.length ?? 0),
+                0
+              )}{" "}
+              total controls
+            </p>
+          </div>
+          <button
+            onClick={() => setShowCreateForm(!showCreateForm)}
+            className="flex items-center gap-1.5 text-xs font-mono px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors"
+          >
+            {showCreateForm ? <X size={12} /> : <Plus size={12} />}
+            {showCreateForm ? "Cancel" : "Create Pack"}
+          </button>
         </div>
+
+        {showCreateForm && (
+          <Card>
+            <div className="space-y-4">
+              <h2 className="text-sm font-semibold text-zinc-100">New Policy Pack</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1">Name</label>
+                  <input
+                    value={newPack.name}
+                    onChange={(e) => setNewPack({ ...newPack, name: e.target.value })}
+                    placeholder="e.g. GDPR Data Protection Pack"
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1">Framework</label>
+                  <select
+                    value={newPack.framework}
+                    onChange={(e) => setNewPack({ ...newPack, framework: e.target.value })}
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+                  >
+                    {FRAMEWORKS.map((fw) => (
+                      <option key={fw.value} value={fw.value}>{fw.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1">Description</label>
+                <textarea
+                  value={newPack.description}
+                  onChange={(e) => setNewPack({ ...newPack, description: e.target.value })}
+                  placeholder="What does this policy pack enforce?"
+                  rows={2}
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none focus:ring-1 focus:ring-blue-500/50 resize-none"
+                />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1">Version</label>
+                  <input
+                    value={newPack.version}
+                    onChange={(e) => setNewPack({ ...newPack, version: e.target.value })}
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Controls</label>
+                  <button
+                    onClick={addControl}
+                    className="text-[10px] font-mono px-2 py-0.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded border border-zinc-700 transition-colors"
+                  >
+                    <Plus size={10} className="inline mr-0.5" /> Add Control
+                  </button>
+                </div>
+                {newControls.length > 0 && (
+                  <div className="space-y-2">
+                    {newControls.map((ctrl, idx) => (
+                      <div key={idx} className="p-3 bg-zinc-800/50 border border-zinc-800 rounded space-y-2">
+                        <div className="flex items-center gap-2">
+                          <input
+                            value={ctrl.name}
+                            onChange={(e) => {
+                              const updated = [...newControls];
+                              updated[idx] = { ...ctrl, name: e.target.value };
+                              setNewControls(updated);
+                            }}
+                            placeholder="Control name"
+                            className="flex-1 bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+                          />
+                          <select
+                            value={ctrl.severity}
+                            onChange={(e) => {
+                              const updated = [...newControls];
+                              updated[idx] = { ...ctrl, severity: e.target.value };
+                              setNewControls(updated);
+                            }}
+                            className="bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                          >
+                            <option value="critical">Critical</option>
+                            <option value="high">High</option>
+                            <option value="medium">Medium</option>
+                            <option value="low">Low</option>
+                          </select>
+                          <select
+                            value={ctrl.checkType}
+                            onChange={(e) => {
+                              const updated = [...newControls];
+                              updated[idx] = { ...ctrl, checkType: e.target.value };
+                              setNewControls(updated);
+                            }}
+                            className="bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                          >
+                            <option value="automated">Automated</option>
+                            <option value="manual">Manual</option>
+                          </select>
+                          <button
+                            onClick={() => setNewControls(newControls.filter((_, i) => i !== idx))}
+                            className="text-zinc-600 hover:text-red-400 transition-colors"
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                        <input
+                          value={ctrl.description}
+                          onChange={(e) => {
+                            const updated = [...newControls];
+                            updated[idx] = { ...ctrl, description: e.target.value };
+                            setNewControls(updated);
+                          }}
+                          placeholder="Control description"
+                          className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {newControls.length === 0 && (
+                  <p className="text-[11px] text-zinc-600 text-center py-3">
+                    No controls yet. You can add controls now or after creating the pack.
+                  </p>
+                )}
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  onClick={handleCreatePack}
+                  disabled={creating || !newPack.name.trim()}
+                  className="text-xs font-mono px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded transition-colors"
+                >
+                  {creating ? "Creating..." : "Create Policy Pack"}
+                </button>
+              </div>
+            </div>
+          </Card>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {policyPacks.map((pack: any, idx: number) => {
