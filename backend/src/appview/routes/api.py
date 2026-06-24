@@ -1,6 +1,7 @@
 """REST API routes serving governance data from ATProto."""
 
 from fastapi import APIRouter, Request, HTTPException
+from pydantic import BaseModel
 
 from atproto import Client, models
 
@@ -273,3 +274,63 @@ async def list_incidents(request: Request):
         })
 
     return {"incidents": result}
+
+
+# --- Agent ---
+
+
+class AgentRunRequest(BaseModel):
+    pr_uri: str
+    repo_uri: str
+    repo_clone_url: str
+    pr_branch: str
+    base_branch: str = "main"
+
+
+@router.post("/agent/run")
+async def run_agent(body: AgentRunRequest, request: Request):
+    """Trigger a compliance agent run for a pull request.
+
+    Requires the [agent] optional dependencies:
+      pip install 'tangled-org[agent]'
+    """
+    get_authenticated_session(request)  # auth check
+
+    try:
+        from src.agent.nodes import ComplianceState, graph  # lazy import
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="Agent dependencies not installed. Run: pip install 'tangled-org[agent]'",
+        )
+
+    if graph is None:
+        raise HTTPException(
+            status_code=503,
+            detail="LangGraph not available. Run: pip install 'tangled-org[agent]'",
+        )
+
+    import asyncio
+
+    state = ComplianceState(
+        pr_uri=body.pr_uri,
+        repo_uri=body.repo_uri,
+        repo_clone_url=body.repo_clone_url,
+        pr_branch=body.pr_branch,
+        base_branch=body.base_branch,
+    )
+
+    # Run synchronous graph in a thread pool to avoid blocking the event loop
+    loop = asyncio.get_event_loop()
+    result: ComplianceState = await loop.run_in_executor(None, graph.invoke, state)
+
+    return {
+        "gate_status": result.gate_status,
+        "gate_reason": result.gate_reason,
+        "risk_level": result.risk_level,
+        "summary": result.summary,
+        "records_written": result.records_written,
+        "agent_run_uri": result.agent_run_uri,
+        "pr_assessment_uri": result.pr_assessment_uri,
+        "error": result.error,
+    }

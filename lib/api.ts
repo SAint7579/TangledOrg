@@ -85,3 +85,31 @@ export async function fetchGraph() {
 export async function fetchIncidents() {
   return apiFetch<{ incidents: any[] }>("/api/incidents");
 }
+
+// Agent
+
+export interface AgentRunRequest {
+  pr_uri: string;
+  repo_uri: string;
+  repo_clone_url: string;
+  pr_branch: string;
+  base_branch?: string;
+}
+
+export interface AgentRunResult {
+  gate_status: string;
+  gate_reason: string;
+  risk_level: string;
+  summary: string;
+  records_written: number;
+  agent_run_uri: string;
+  pr_assessment_uri: string;
+  error: string | null;
+}
+
+export async function runAgent(payload: AgentRunRequest): Promise<AgentRunResult | null> {
+  return apiFetch<AgentRunResult>("/api/agent/run", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
