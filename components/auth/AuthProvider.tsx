@@ -44,7 +44,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!loading && !user && pathname !== "/login") {
+    const publicPaths = ["/login", "/auth/callback"];
+    if (!loading && !user && !publicPaths.includes(pathname)) {
       router.replace("/login");
     }
   }, [loading, user, pathname, router]);

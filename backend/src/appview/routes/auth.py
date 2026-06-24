@@ -110,7 +110,7 @@ async def login(handle: str, request: Request):
 
 @router.get("/callback")
 async def callback(code: str, state: str, request: Request):
-    """Handle OAuth callback — exchange code for tokens."""
+    """Handle OAuth callback — exchange code for tokens, redirect to frontend with session token."""
     store = _get_store()
     base_url = settings.backend_url or str(request.base_url).rstrip("/")
     client_id = f"{base_url}/.well-known/atproto-client-metadata.json"
@@ -154,17 +154,8 @@ async def callback(code: str, state: str, request: Request):
     )
 
     frontend_url = settings.frontend_url or "http://localhost:3000"
-    response = RedirectResponse(url=frontend_url)
-    response.set_cookie(
-        key=COOKIE_NAME,
-        value=session_id,
-        httponly=True,
-        secure=not settings.debug,
-        samesite="none" if not settings.debug else "lax",
-        max_age=60 * 60 * 24 * 30,
-        path="/",
-    )
-    return response
+    redirect_to = f"{frontend_url}/auth/callback?session={session_id}"
+    return RedirectResponse(url=redirect_to)
 
 
 @router.get("/me")
@@ -180,28 +171,33 @@ async def me(request: Request):
 
 @router.post("/logout")
 async def logout(request: Request):
-    """Clear session and cookie."""
+    """Clear session."""
     store = _get_store()
-    session_id = request.cookies.get(COOKIE_NAME)
-    if session_id:
-        store.delete_session(session_id)
+    token = _extract_token(request)
+    if token:
+        store.delete_session(token)
+    return {"ok": True}
 
-    response = Response(status_code=200)
-    response.delete_cookie(key=COOKIE_NAME, path="/")
-    return response
+
+def _extract_token(request: Request) -> str | None:
+    """Extract session token from Authorization header or cookie."""
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.startswith("Bearer "):
+        return auth_header[7:]
+    return request.cookies.get(COOKIE_NAME)
 
 
 def get_authenticated_session(request: Request) -> dict:
-    """Extract and validate the session from request cookies.
+    """Extract and validate the session from request.
 
-    Shared with api.py for auth checks.
+    Accepts both Authorization: Bearer <token> and cookie-based sessions.
     """
     store = _get_store()
-    session_id = request.cookies.get(COOKIE_NAME)
-    if not session_id:
+    token = _extract_token(request)
+    if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
-    session = store.get_session(session_id)
+    session = store.get_session(token)
     if not session:
         raise HTTPException(status_code=401, detail="Session expired")
 

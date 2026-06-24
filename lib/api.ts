@@ -1,10 +1,31 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
+const SESSION_KEY = "tangled_session";
+
+export function getSessionToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(SESSION_KEY);
+}
+
+export function setSessionToken(token: string): void {
+  localStorage.setItem(SESSION_KEY, token);
+}
+
+export function clearSessionToken(): void {
+  localStorage.removeItem(SESSION_KEY);
+}
+
+function authHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const token = getSessionToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  return headers;
+}
+
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T | null> {
   try {
     const res = await fetch(`${API_URL}${path}`, {
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders(),
       ...options,
     });
     if (res.status === 401) return null;
@@ -39,7 +60,11 @@ export function getLoginUrl(handle: string): string {
 }
 
 export async function logout(): Promise<void> {
-  await fetch(`${API_URL}/auth/logout`, { method: "POST", credentials: "include" });
+  await fetch(`${API_URL}/auth/logout`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  clearSessionToken();
 }
 
 // ── Organizations ───────────────────────────────────────────────────────────
