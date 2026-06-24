@@ -12,10 +12,13 @@ import {
   Network,
   Users,
   AlertCircle,
+  LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/ui/Avatar";
-import { mockOrg, mockMembers } from "@/lib/mock-data";
+import { useAuth } from "@/components/auth/AuthProvider";
+import { logout } from "@/lib/api";
+import { mockOrg } from "@/lib/mock-data";
 
 const navGroups = [
   {
@@ -48,10 +51,17 @@ const navGroups = [
   },
 ];
 
-const currentUser = mockMembers[0]; // Elena Vasquez as current user
-
 export function Sidebar() {
   const pathname = usePathname();
+  const { user } = useAuth();
+
+  const displayHandle = user?.handle ?? "anonymous";
+  const shortHandle = displayHandle.split(".")[0];
+
+  const handleLogout = async () => {
+    await logout();
+    window.location.href = "/login";
+  };
 
   return (
     <aside className="fixed left-0 top-0 h-screen w-[240px] flex flex-col bg-zinc-950 border-r border-zinc-800/70 z-40">
@@ -135,14 +145,18 @@ export function Sidebar() {
       {/* User footer */}
       <div className="border-t border-zinc-800 px-3 py-3">
         <div className="flex items-center gap-2.5">
-          <Avatar displayName={currentUser.displayName} size="sm" />
+          <Avatar displayName={shortHandle} size="sm" />
           <div className="flex-1 min-w-0">
-            <p className="text-xs font-medium text-zinc-300 truncate">{currentUser.displayName}</p>
-            <p className="text-[10px] text-zinc-600 font-mono truncate">{currentUser.handle.split(".")[0]}.tngl.sh</p>
+            <p className="text-xs font-medium text-zinc-300 truncate">{shortHandle}</p>
+            <p className="text-[10px] text-zinc-600 font-mono truncate">{displayHandle}</p>
           </div>
-          <span className="text-[9px] text-zinc-600 font-mono uppercase tracking-wide flex-shrink-0">
-            {currentUser.role}
-          </span>
+          <button
+            onClick={handleLogout}
+            className="text-zinc-600 hover:text-zinc-400 transition-colors flex-shrink-0"
+            title="Sign out"
+          >
+            <LogOut size={13} />
+          </button>
         </div>
       </div>
     </aside>

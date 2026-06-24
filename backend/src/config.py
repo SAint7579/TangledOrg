@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     db_path: str = "./data/tangledorg.db"
     jetstream_url: str = "wss://jetstream2.us-east.bsky.network/subscribe"
 
+    # URLs
+    backend_url: Optional[str] = None
+    frontend_url: Optional[str] = "http://localhost:3000"
+    session_secret: str = "change-me-in-production"
+
     # Debug
     debug: bool = False
 
