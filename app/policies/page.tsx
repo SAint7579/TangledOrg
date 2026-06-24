@@ -128,8 +128,8 @@ export default function PoliciesPage() {
     );
   }
 
-  const controls = selectedPack.controls ?? [];
-  const bindings = selectedPack.bindings ?? [];
+  const controls = selectedPack?.controls ?? [];
+  const bindings = selectedPack?.bindings ?? [];
 
   async function handleBind() {
     if (!bindRepoUri || !selectedPack) return;
