@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import {
   Shield,
   LayoutDashboard,
-  GitPullRequest,
   FolderGit2,
   Building2,
   FileText,
@@ -19,16 +18,35 @@ import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/ui/Avatar";
 import { mockOrg, mockMembers } from "@/lib/mock-data";
 
-const navItems = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/repos", label: "Repos", icon: FolderGit2 },
-  { href: "/repos/patient-service/pr/pr-001", label: "Pull Requests", icon: GitPullRequest },
-  { href: "/incidents", label: "Incidents", icon: AlertOctagon },
-  { href: "/org", label: "Organization", icon: Building2 },
-  { href: "/policies", label: "Policies", icon: BookOpen },
-  { href: "/audit", label: "Audit Log", icon: FileText },
-  { href: "/graph", label: "Dependency Map", icon: Network },
-  { href: "/people", label: "People", icon: Users },
+const navGroups = [
+  {
+    label: null,
+    items: [
+      { href: "/", label: "Dashboard", icon: LayoutDashboard },
+    ],
+  },
+  {
+    label: "Monitor",
+    items: [
+      { href: "/incidents", label: "Incidents", icon: AlertOctagon },
+      { href: "/repos", label: "Repos", icon: FolderGit2 },
+    ],
+  },
+  {
+    label: "Govern",
+    items: [
+      { href: "/policies", label: "Policies", icon: BookOpen },
+      { href: "/org", label: "Organization", icon: Building2 },
+    ],
+  },
+  {
+    label: "Audit",
+    items: [
+      { href: "/audit", label: "Audit Log", icon: FileText },
+      { href: "/graph", label: "Dependency Map", icon: Network },
+      { href: "/people", label: "People", icon: Users },
+    ],
+  },
 ];
 
 const currentUser = mockMembers[0]; // Elena Vasquez as current user
@@ -55,55 +73,57 @@ export function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 px-2 py-3 overflow-y-auto">
-        <div className="mb-1 px-2 py-1">
-          <span className="text-[9px] text-zinc-600 uppercase tracking-widest font-semibold">
-            Navigation
-          </span>
-        </div>
-        <ul className="space-y-0.5">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive =
-              item.href === "/"
-                ? pathname === "/"
-                : item.href.includes("/pr/")
-                ? pathname.includes("/pr/")
-                : item.href === "/incidents"
-                ? pathname.startsWith("/incidents")
-                : pathname.startsWith(item.href) && !pathname.includes("/pr/") && !pathname.startsWith("/incidents");
+        {navGroups.map((group, gi) => {
+          const isActive = (href: string) =>
+            href === "/" ? pathname === "/" : pathname.startsWith(href);
 
-            return (
-              <li key={item.href}>
-                <Link
-                  href={item.href}
-                  className={cn(
-                    "flex items-center gap-2.5 px-2.5 py-2 rounded-md text-sm transition-all group",
-                    isActive
-                      ? "bg-blue-600/15 text-blue-300 border border-blue-500/20"
-                      : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60 border border-transparent"
-                  )}
-                >
-                  <Icon
-                    size={15}
-                    strokeWidth={isActive ? 2.5 : 2}
-                    className={cn(
-                      "flex-shrink-0",
-                      isActive ? "text-blue-400" : "text-zinc-500 group-hover:text-zinc-300"
-                    )}
-                  />
-                  <span className={cn("font-medium", isActive && "text-blue-200")}>
-                    {item.label}
+          return (
+            <div key={gi} className={gi > 0 ? "mt-4" : ""}>
+              {group.label && (
+                <div className="mb-1 px-2 py-1">
+                  <span className="text-[9px] text-zinc-600 uppercase tracking-widest font-semibold">
+                    {group.label}
                   </span>
-                  {isActive && (
-                    <ChevronRight size={12} className="ml-auto text-blue-500/60" />
-                  )}
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
+                </div>
+              )}
+              <ul className="space-y-0.5">
+                {group.items.map((item) => {
+                  const Icon = item.icon;
+                  const active = isActive(item.href);
+                  return (
+                    <li key={item.href}>
+                      <Link
+                        href={item.href}
+                        className={cn(
+                          "flex items-center gap-2.5 px-2.5 py-2 rounded-md text-sm transition-all group",
+                          active
+                            ? "bg-blue-600/15 text-blue-300 border border-blue-500/20"
+                            : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60 border border-transparent"
+                        )}
+                      >
+                        <Icon
+                          size={15}
+                          strokeWidth={active ? 2.5 : 2}
+                          className={cn(
+                            "flex-shrink-0",
+                            active ? "text-blue-400" : "text-zinc-500 group-hover:text-zinc-300"
+                          )}
+                        />
+                        <span className={cn("font-medium", active && "text-blue-200")}>
+                          {item.label}
+                        </span>
+                        {active && (
+                          <ChevronRight size={12} className="ml-auto text-blue-500/60" />
+                        )}
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          );
+        })}
 
-        {/* Section divider */}
         <div className="mt-4 mb-1 px-2 py-1">
           <span className="text-[9px] text-zinc-600 uppercase tracking-widest font-semibold">
             Active Org
