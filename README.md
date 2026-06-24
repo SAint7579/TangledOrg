@@ -16,12 +16,14 @@ Tangled Org gives regulated software teams organizational structure, policy enfo
 
 ## Tech Stack
 
-| Component | Language | Key Tech |
-|---|---|---|
-| AppView (web UI + API) | Go | Chi, HTMX, Tailwind, SQLite, indigo |
-| Compliance Agent | Python | LangGraph, Claude, Semgrep, Gitleaks, OSV-Scanner |
-| Merge Gate Hook | Go | Runs on Tangled Knot |
-| Lexicon Schemas | JSON | ATProto Lexicon v1 (24 record types) |
+All-Python backend — one codebase, shared models, single deployment.
+
+| Component | Key Tech |
+|---|---|
+| AppView (web UI + API) | FastAPI, Jinja2, HTMX, Tailwind, SQLite |
+| Compliance Agent | LangGraph, Claude, Semgrep, Gitleaks, OSV-Scanner |
+| ATProto Client | MarshalX/atproto SDK |
+| Data Models | Pydantic (24 governance record types) |
 
 ## Documentation
 
