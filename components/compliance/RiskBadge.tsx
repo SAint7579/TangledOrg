@@ -1,4 +1,4 @@
-import { cn, riskTierBg } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import type { RiskTier } from "@/types";
 
 interface RiskBadgeProps {
@@ -7,29 +7,29 @@ interface RiskBadgeProps {
   className?: string;
 }
 
-const labels: Record<RiskTier, string> = {
-  critical: "CRITICAL",
-  high: "HIGH",
-  medium: "MEDIUM",
-  low: "LOW",
+const colors: Record<RiskTier, string> = {
+  critical: "text-red-400",
+  high:     "text-orange-400",
+  medium:   "text-amber-400",
+  low:      "text-green-400",
 };
 
 export function RiskBadge({ tier, size = "md", className }: RiskBadgeProps) {
   const sizeClasses = {
-    sm: "text-[9px] px-1.5 py-0.5",
-    md: "text-[10px] px-2 py-0.5",
+    sm: "text-[9px]",
+    md: "text-[10px]",
   };
 
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded border font-mono font-semibold tracking-widest uppercase",
-        riskTierBg(tier),
+        "font-mono font-semibold tracking-widest uppercase",
+        colors[tier],
         sizeClasses[size],
         className
       )}
     >
-      {labels[tier]}
+      {tier}
     </span>
   );
 }

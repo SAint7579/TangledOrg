@@ -11,7 +11,6 @@ import {
   BookOpen,
   Network,
   Users,
-  ChevronRight,
   AlertOctagon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -57,16 +56,14 @@ export function Sidebar() {
   return (
     <aside className="fixed left-0 top-0 h-screen w-[240px] flex flex-col bg-zinc-950 border-r border-zinc-800/70 z-40">
       {/* Logo */}
-      <div className="flex items-center gap-2.5 px-4 h-14 border-b border-zinc-800/70">
-        <div className="flex items-center justify-center w-7 h-7 rounded-md bg-blue-600/20 border border-blue-500/30">
-          <Shield size={15} className="text-blue-400" strokeWidth={2} />
-        </div>
+      <div className="flex items-center gap-2.5 px-4 h-14 border-b border-zinc-800">
+        <Shield size={14} className="text-blue-400 flex-shrink-0" strokeWidth={2} />
         <div className="flex flex-col">
-          <span className="text-sm font-semibold text-zinc-100 leading-tight tracking-tight">
+          <span className="text-sm font-semibold text-zinc-100 tracking-tight leading-none">
             Tangled Org
           </span>
-          <span className="text-[9px] text-zinc-500 font-mono tracking-wider uppercase">
-            Governance Layer
+          <span className="text-[9px] text-zinc-600 font-mono tracking-[0.12em] uppercase mt-0.5">
+            Governance
           </span>
         </div>
       </div>
@@ -80,8 +77,8 @@ export function Sidebar() {
           return (
             <div key={gi} className={gi > 0 ? "mt-4" : ""}>
               {group.label && (
-                <div className="mb-1 px-2 py-1">
-                  <span className="text-[9px] text-zinc-600 uppercase tracking-widest font-semibold">
+                <div className="mb-1 px-3 pt-1">
+                  <span className="text-[9px] text-zinc-700 uppercase tracking-[0.15em] font-semibold">
                     {group.label}
                   </span>
                 </div>
@@ -95,26 +92,21 @@ export function Sidebar() {
                       <Link
                         href={item.href}
                         className={cn(
-                          "flex items-center gap-2.5 px-2.5 py-2 rounded-md text-sm transition-all group",
+                          "flex items-center gap-2.5 py-1.5 pr-3 text-sm transition-colors group",
                           active
-                            ? "bg-blue-600/15 text-blue-300 border border-blue-500/20"
-                            : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60 border border-transparent"
+                            ? "border-l-2 border-blue-400 pl-[9px] text-zinc-100 bg-zinc-800/50"
+                            : "border-l-2 border-transparent pl-[9px] text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/30"
                         )}
                       >
                         <Icon
-                          size={15}
-                          strokeWidth={active ? 2.5 : 2}
+                          size={14}
+                          strokeWidth={active ? 2 : 1.5}
                           className={cn(
                             "flex-shrink-0",
-                            active ? "text-blue-400" : "text-zinc-500 group-hover:text-zinc-300"
+                            active ? "text-blue-400" : "text-zinc-600 group-hover:text-zinc-400"
                           )}
                         />
-                        <span className={cn("font-medium", active && "text-blue-200")}>
-                          {item.label}
-                        </span>
-                        {active && (
-                          <ChevronRight size={12} className="ml-auto text-blue-500/60" />
-                        )}
+                        <span className="font-medium text-[13px]">{item.label}</span>
                       </Link>
                     </li>
                   );
@@ -124,37 +116,33 @@ export function Sidebar() {
           );
         })}
 
-        <div className="mt-4 mb-1 px-2 py-1">
-          <span className="text-[9px] text-zinc-600 uppercase tracking-widest font-semibold">
-            Active Org
+        <div className="mt-4 mb-1 px-3 pt-1">
+          <span className="text-[9px] text-zinc-700 uppercase tracking-[0.15em] font-semibold">
+            Organization
           </span>
         </div>
-        <div className="px-2.5 py-2 rounded-md bg-zinc-900/60 border border-zinc-800/50">
+        <div className="mx-2 px-3 py-2 border border-zinc-800 bg-zinc-900/40">
           <div className="flex items-center gap-2">
-            <div className="w-5 h-5 rounded bg-blue-600/20 border border-blue-500/30 flex items-center justify-center">
-              <Building2 size={10} className="text-blue-400" />
-            </div>
+            <Building2 size={11} className="text-zinc-600 flex-shrink-0" />
             <div className="flex-1 min-w-0">
-              <p className="text-xs font-medium text-zinc-200 truncate">{mockOrg.name}</p>
-              <p className="text-[10px] text-zinc-500 font-mono truncate">@{mockOrg.handle.split(".")[0]}</p>
+              <p className="text-xs font-medium text-zinc-300 truncate">{mockOrg.name}</p>
+              <p className="text-[10px] text-zinc-600 font-mono truncate">{mockOrg.handle.split(".")[0]}.tngl.sh</p>
             </div>
           </div>
         </div>
       </nav>
 
       {/* User footer */}
-      <div className="border-t border-zinc-800/70 px-3 py-3">
+      <div className="border-t border-zinc-800 px-3 py-3">
         <div className="flex items-center gap-2.5">
           <Avatar displayName={currentUser.displayName} size="sm" />
           <div className="flex-1 min-w-0">
-            <p className="text-xs font-medium text-zinc-200 truncate">{currentUser.displayName}</p>
-            <p className="text-[10px] text-zinc-500 font-mono truncate">@{currentUser.handle.split(".")[0]}</p>
+            <p className="text-xs font-medium text-zinc-300 truncate">{currentUser.displayName}</p>
+            <p className="text-[10px] text-zinc-600 font-mono truncate">{currentUser.handle.split(".")[0]}.tngl.sh</p>
           </div>
-          <div className="flex-shrink-0">
-            <span className="text-[9px] bg-blue-600/20 text-blue-400 border border-blue-500/30 px-1.5 py-0.5 rounded font-mono uppercase tracking-wide">
-              {currentUser.role}
-            </span>
-          </div>
+          <span className="text-[9px] text-zinc-600 font-mono uppercase tracking-wide flex-shrink-0">
+            {currentUser.role}
+          </span>
         </div>
       </div>
     </aside>
