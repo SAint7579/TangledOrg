@@ -242,7 +242,7 @@ export default function DashboardPage() {
               body: "Semgrep, Gitleaks, and OSV-Scanner run automatically. An AI agent reasons about regulatory implications.",
             },
             {
-              icon: Lock,
+              icon: Shield,
               color: "text-purple-400 bg-purple-500/10",
               title: "Signed ATProto records",
               body: "Every assessment, approval, and evidence record is cryptographically signed on your PDS. Tamper-evident by design.",
