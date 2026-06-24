@@ -1,7 +1,9 @@
 """ATProto OAuth authentication routes."""
 
+import asyncio
 import json
 import secrets
+from functools import partial
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Request, Response, HTTPException
@@ -47,19 +49,21 @@ async def login(handle: str, request: Request):
     client_id = f"{base_url}/.well-known/atproto-client-metadata.json"
     redirect_uri = f"{base_url}/auth/callback"
 
+    loop = asyncio.get_event_loop()
+
     try:
-        did = resolve_handle_to_did(handle)
+        did = await loop.run_in_executor(None, resolve_handle_to_did, handle)
     except Exception:
         raise HTTPException(status_code=400, detail=f"Could not resolve handle: {handle}")
 
     try:
-        pds_url = resolve_did_to_pds(did)
+        pds_url = await loop.run_in_executor(None, resolve_did_to_pds, did)
     except Exception:
         raise HTTPException(status_code=400, detail=f"Could not find PDS for: {did}")
 
     try:
-        auth_server_url = resolve_authorization_server(pds_url)
-        auth_meta = fetch_authorization_server_metadata(auth_server_url)
+        auth_server_url = await loop.run_in_executor(None, resolve_authorization_server, pds_url)
+        auth_meta = await loop.run_in_executor(None, fetch_authorization_server_metadata, auth_server_url)
     except Exception:
         raise HTTPException(status_code=500, detail="Could not discover authorization server")
 
@@ -87,7 +91,12 @@ async def login(handle: str, request: Request):
         "login_hint": handle,
     }
 
-    par_response = dpop_post_form(par_endpoint, par_data, private_key, pub_jwk)
+    # Run PAR in a thread so it doesn't block the event loop —
+    # tngl.sh needs to fetch /.well-known/atproto-client-metadata.json
+    # from this server during PAR validation
+    par_response = await loop.run_in_executor(
+        None, partial(dpop_post_form, par_endpoint, par_data, private_key, pub_jwk)
+    )
 
     request_uri = par_response.get("request_uri")
     if not request_uri:
@@ -124,7 +133,10 @@ async def callback(code: str, state: str, request: Request):
     private_key = jwk_to_key(private_jwk)
     pub_jwk = public_jwk(private_jwk)
 
-    token_endpoint = discover_token_endpoint(oauth_state["pds_issuer"])
+    loop = asyncio.get_event_loop()
+    token_endpoint = await loop.run_in_executor(
+        None, discover_token_endpoint, oauth_state["pds_issuer"]
+    )
 
     token_data = {
         "grant_type": "authorization_code",
@@ -134,14 +146,18 @@ async def callback(code: str, state: str, request: Request):
         "code_verifier": oauth_state["code_verifier"],
     }
 
-    tokens = dpop_post_form(token_endpoint, token_data, private_key, pub_jwk)
+    tokens = await loop.run_in_executor(
+        None, partial(dpop_post_form, token_endpoint, token_data, private_key, pub_jwk)
+    )
 
     access_token = tokens.get("access_token")
     if not access_token:
         raise HTTPException(status_code=500, detail=f"Token exchange failed: {tokens}")
 
     sub = tokens.get("sub", "")
-    did = sub if sub.startswith("did:") else resolve_handle_to_did(oauth_state["handle"])
+    did = sub if sub.startswith("did:") else await loop.run_in_executor(
+        None, resolve_handle_to_did, oauth_state["handle"]
+    )
 
     session_id = store.create_session(
         did=did,
