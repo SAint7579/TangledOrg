@@ -687,9 +687,9 @@ export const mockAuditEntries: AuditEntry[] = [
 
 export const mockDependencyGraph: DependencyGraph = {
   nodes: [
-    { id: "node-001", repoId: "repo-001", repoSlug: "patient-service", label: "patient-service", complianceStatus: "non-compliant", riskTier: "high", x: 400, y: 200, critical: true },
-    { id: "node-002", repoId: "repo-002", repoSlug: "billing-service", label: "billing-service", complianceStatus: "compliant", riskTier: "high", x: 200, y: 400, critical: true },
-    { id: "node-003", repoId: "repo-003", repoSlug: "auth-service", label: "auth-service", complianceStatus: "at-risk", riskTier: "high", x: 600, y: 400, critical: true },
+    { id: "node-001", repoId: "repo-001", repoSlug: "patient-service", label: "patient-service", complianceStatus: "non-compliant", riskTier: "high", x: 350, y: 110, critical: true },
+    { id: "node-002", repoId: "repo-002", repoSlug: "billing-service", label: "billing-service", complianceStatus: "compliant", riskTier: "high", x: 160, y: 290, critical: true },
+    { id: "node-003", repoId: "repo-003", repoSlug: "auth-service", label: "auth-service", complianceStatus: "at-risk", riskTier: "high", x: 540, y: 290, critical: true },
   ],
   edges: [
     { id: "edge-001", source: "node-001", target: "node-002", type: "depends-on", critical: true },
