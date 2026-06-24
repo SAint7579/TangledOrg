@@ -49,9 +49,9 @@ export function ControlRow({ evaluation }: ControlRowProps) {
             {evaluation.severity}
           </span>
           {evaluation.automatedCheck ? (
-            <Zap size={9} className="text-zinc-500" title="Automated check" />
+            <Zap size={9} className="text-zinc-500" />
           ) : (
-            <User size={9} className="text-zinc-500" title="Manual check" />
+            <User size={9} className="text-zinc-500" />
           )}
         </div>
       </div>
