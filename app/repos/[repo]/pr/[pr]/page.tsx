@@ -22,6 +22,8 @@ import {
   ChevronDown,
   ChevronUp,
   Zap,
+  Network,
+  Terminal,
 } from "lucide-react";
 import { Shell } from "@/components/layout/Shell";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -333,6 +335,55 @@ export default function PRPage({ params }: { params: { repo: string; pr: string 
               </div>
             </Card>
 
+            {/* Dependency Impact */}
+            {assessment.impactAssessment && assessment.impactAssessment.affectedEdges.length > 0 && (
+              <Card>
+                <div className="flex items-center gap-2 mb-3">
+                  <Network size={14} className="text-orange-400" />
+                  <span className="text-sm font-semibold text-zinc-100">Dependency Impact</span>
+                  <span className="text-[10px] bg-zinc-800 text-zinc-400 px-1.5 py-0.5 rounded font-mono">
+                    {assessment.impactAssessment.affectedEdges.length} downstream
+                  </span>
+                </div>
+                <p className="text-[11px] text-zinc-400 mb-3 leading-relaxed">{assessment.impactAssessment.summary}</p>
+                <div className="space-y-2">
+                  {assessment.impactAssessment.affectedEdges.map((edge, i) => {
+                    const actionColors = {
+                      "update-required": "bg-red-500/10 text-red-400 border-red-500/20",
+                      "review-recommended": "bg-amber-500/10 text-amber-400 border-amber-500/20",
+                      "no-action": "bg-zinc-500/10 text-zinc-400 border-zinc-500/20",
+                    };
+                    const depTypeColors: Record<string, string> = {
+                      "api-call": "bg-blue-500/10 text-blue-400 border-blue-500/20",
+                      import: "bg-purple-500/10 text-purple-400 border-purple-500/20",
+                      "shared-model": "bg-cyan-500/10 text-cyan-400 border-cyan-500/20",
+                      "event-consumer": "bg-indigo-500/10 text-indigo-400 border-indigo-500/20",
+                      "database-shared": "bg-orange-500/10 text-orange-400 border-orange-500/20",
+                    };
+                    return (
+                      <div key={i} className="p-2.5 rounded-md bg-zinc-800/40 border border-zinc-800/60 space-y-1.5">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-mono font-medium text-zinc-200">{edge.downstreamRepoName}</span>
+                          <span className={cn("text-[9px] px-1.5 py-0.5 rounded border", depTypeColors[edge.dependencyType])}>
+                            {edge.dependencyType}
+                          </span>
+                          <span className={cn("text-[9px] px-1.5 py-0.5 rounded border ml-auto", actionColors[edge.actionRequired])}>
+                            {edge.actionRequired.replace("-", " ")}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-zinc-500 leading-relaxed">{edge.reason}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+                {assessment.impactAssessment.affectedEdges.filter((e) => e.actionRequired === "update-required").length > 0 && (
+                  <p className="text-[10px] text-orange-400 mt-2.5 pt-2.5 border-t border-zinc-800/60">
+                    ⚠ {assessment.impactAssessment.affectedEdges.filter((e) => e.actionRequired === "update-required").length} downstream issue{assessment.impactAssessment.affectedEdges.filter((e) => e.actionRequired === "update-required").length !== 1 ? "s" : ""} will be created on merge
+                  </p>
+                )}
+              </Card>
+            )}
+
             {/* Evidence */}
             <Card padding={false}>
               <button
@@ -446,6 +497,46 @@ export default function PRPage({ params }: { params: { repo: string; pr: string 
                 </div>
               )}
             </Card>
+
+            {/* Agent Run */}
+            {assessment.agentRun && (
+              <div className="rounded-md bg-zinc-900/60 border border-zinc-800/50 px-3 py-2.5 space-y-1.5">
+                <div className="flex items-center gap-2 mb-2">
+                  <Terminal size={12} className="text-zinc-500" />
+                  <span className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wider">Agent Run</span>
+                  <span className="text-[9px] font-mono text-zinc-600 bg-zinc-800 px-1.5 py-0.5 rounded ml-auto">
+                    v{assessment.agentRun.version}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-[10px]">
+                  <div className="flex justify-between">
+                    <span className="text-zinc-600">duration</span>
+                    <span className="text-zinc-400">{(assessment.agentRun.durationMs / 1000).toFixed(1)}s</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-600">records</span>
+                    <span className="text-zinc-400">{assessment.agentRun.recordsWritten}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-600">tokens in</span>
+                    <span className="text-zinc-400">{assessment.agentRun.claudeTokensIn.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-600">tokens out</span>
+                    <span className="text-zinc-400">{assessment.agentRun.claudeTokensOut.toLocaleString()}</span>
+                  </div>
+                </div>
+                <div className="pt-1 border-t border-zinc-800/40">
+                  <div className="flex flex-wrap gap-1">
+                    {assessment.agentRun.scansRun.map((scan) => (
+                      <span key={scan} className="text-[9px] font-mono text-zinc-600 bg-zinc-800/60 px-1.5 py-0.5 rounded">
+                        {scan}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Merge action */}
             <div className="flex gap-2">

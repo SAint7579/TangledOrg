@@ -8,6 +8,7 @@ import {
   TrendingUp,
   Shield,
   Clock,
+  AlertOctagon,
 } from "lucide-react";
 import { Shell } from "@/components/layout/Shell";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -23,6 +24,7 @@ import {
   mockPolicyPacks,
   mockMembers,
   mockOrg,
+  mockIncidents,
 } from "@/lib/mock-data";
 import { formatRelativeTime, auditTypeColor, languageDot, cn } from "@/lib/utils";
 
@@ -58,6 +60,8 @@ export default function DashboardPage() {
   const atRiskRepos = mockRepos.filter((r) => r.complianceStatus === "at-risk").length;
   const nonCompliantRepos = mockRepos.filter((r) => r.complianceStatus === "non-compliant").length;
   const blockedPRs = mockPRs.filter((pr) => pr.assessment?.mergeGate === "blocked").length;
+  const openIncidents = mockIncidents.filter((i) => i.status === "open" || i.status === "in-progress");
+  const slaAtRisk = mockIncidents.filter((i) => i.sla.status === "at-risk" || i.sla.status === "breached").length;
 
   // Org-level compliance score: weighted average
   const orgScore = Math.round(
@@ -87,8 +91,8 @@ export default function DashboardPage() {
           <div>
             <h1 className="text-xl font-bold text-zinc-100">Compliance Dashboard</h1>
             <p className="text-sm text-zinc-500 mt-1">
-              Governance overview for <span className="text-zinc-300 font-medium">Acme Corp</span> ·{" "}
-              <span className="font-mono text-xs text-zinc-600">did:plc:acmecorp7x2kqmn9pltrs44e</span>
+              Governance overview for <span className="text-zinc-300 font-medium">Acme Health</span> ·{" "}
+              <span className="font-mono text-xs text-zinc-600">did:plc:acmehealth7x2kqmn9pltrs44e</span>
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -113,7 +117,7 @@ export default function DashboardPage() {
           </Card>
 
           {/* Stat cards */}
-          <div className="lg:col-span-3 grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="lg:col-span-3 grid grid-cols-2 sm:grid-cols-4 gap-4">
             <StatCard
               label="Compliant Repos"
               value={compliantRepos}
@@ -135,8 +139,72 @@ export default function DashboardPage() {
               icon={XCircle}
               color="bg-red-500/10 text-red-400"
             />
+            <StatCard
+              label="SLA at Risk"
+              value={slaAtRisk}
+              sub="incidents"
+              icon={AlertOctagon}
+              color="bg-orange-500/10 text-orange-400"
+            />
           </div>
         </div>
+
+        {/* Open Incidents */}
+        {openIncidents.length > 0 && (
+          <Card padding={false}>
+            <div className="px-4 pt-4 pb-3 flex items-center justify-between border-b border-zinc-800/60">
+              <div className="flex items-center gap-2">
+                <AlertOctagon size={14} className="text-orange-400" />
+                <h3 className="text-sm font-semibold text-zinc-100">Open Incidents</h3>
+                <span className="text-[10px] bg-zinc-800 text-zinc-400 px-1.5 py-0.5 rounded font-mono">
+                  {openIncidents.length}
+                </span>
+              </div>
+              <Link href="/incidents" className="text-xs text-blue-400 hover:text-blue-300">
+                View all →
+              </Link>
+            </div>
+            <div className="divide-y divide-zinc-800/40">
+              {openIncidents.map((incident) => {
+                const severityDot = {
+                  critical: "bg-red-500",
+                  high: "bg-orange-500",
+                  medium: "bg-amber-500",
+                  low: "bg-green-500",
+                }[incident.severity];
+                const categoryColors: Record<string, string> = {
+                  "data-leak": "bg-red-500/10 text-red-400 border-red-500/20",
+                  vulnerability: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+                  "unauthorized-access": "bg-orange-500/10 text-orange-400 border-orange-500/20",
+                  "supply-chain": "bg-purple-500/10 text-purple-400 border-purple-500/20",
+                  misconfiguration: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+                  other: "bg-zinc-500/10 text-zinc-400 border-zinc-500/20",
+                };
+                const slaDisplay = incident.sla.status === "breached"
+                  ? <span className="text-[10px] font-semibold text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded">BREACHED</span>
+                  : incident.sla.status === "at-risk"
+                    ? <span className="text-[10px] font-semibold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded">{incident.sla.hoursRemaining >= 24 ? `${Math.ceil(incident.sla.hoursRemaining / 24)}d left ⚠` : `${incident.sla.hoursRemaining}h left ⚠`}</span>
+                    : <span className="text-[10px] text-zinc-500 font-mono">{incident.sla.hoursRemaining >= 24 ? `${Math.ceil(incident.sla.hoursRemaining / 24)}d left` : `${incident.sla.hoursRemaining}h left`}</span>;
+                return (
+                  <Link
+                    key={incident.id}
+                    href={`/incidents/${incident.id}`}
+                    className="flex items-center gap-3 px-4 py-3 hover:bg-zinc-800/30 transition-colors group"
+                  >
+                    <span className={cn("w-2 h-2 rounded-full flex-shrink-0", severityDot)} />
+                    <span className="font-mono text-xs text-zinc-400 w-14 flex-shrink-0">{incident.id}</span>
+                    <span className="text-xs font-mono text-zinc-500 w-28 flex-shrink-0 truncate">{incident.repoSlug}</span>
+                    <span className={cn("text-[10px] px-1.5 py-0.5 rounded border capitalize flex-shrink-0", categoryColors[incident.category])}>
+                      {incident.category.replace("-", " ")}
+                    </span>
+                    <span className="flex-1 text-xs text-zinc-300 group-hover:text-white truncate">{incident.title}</span>
+                    <div className="flex-shrink-0">{slaDisplay}</div>
+                  </Link>
+                );
+              })}
+            </div>
+          </Card>
+        )}
 
         {/* Middle section */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

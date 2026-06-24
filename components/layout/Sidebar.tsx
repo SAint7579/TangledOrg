@@ -13,6 +13,7 @@ import {
   Network,
   Users,
   ChevronRight,
+  AlertOctagon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/ui/Avatar";
@@ -21,7 +22,8 @@ import { mockOrg, mockMembers } from "@/lib/mock-data";
 const navItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/repos", label: "Repos", icon: FolderGit2 },
-  { href: "/repos/api-core/pr/pr-001", label: "Pull Requests", icon: GitPullRequest },
+  { href: "/repos/patient-service/pr/pr-001", label: "Pull Requests", icon: GitPullRequest },
+  { href: "/incidents", label: "Incidents", icon: AlertOctagon },
   { href: "/org", label: "Organization", icon: Building2 },
   { href: "/policies", label: "Policies", icon: BookOpen },
   { href: "/audit", label: "Audit Log", icon: FileText },
@@ -66,7 +68,9 @@ export function Sidebar() {
                 ? pathname === "/"
                 : item.href.includes("/pr/")
                 ? pathname.includes("/pr/")
-                : pathname.startsWith(item.href) && !pathname.includes("/pr/");
+                : item.href === "/incidents"
+                ? pathname.startsWith("/incidents")
+                : pathname.startsWith(item.href) && !pathname.includes("/pr/") && !pathname.startsWith("/incidents");
 
             return (
               <li key={item.href}>

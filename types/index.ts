@@ -27,7 +27,7 @@ export interface Team {
   repos: string[]; // repo ids
 }
 
-export type MemberRole = "owner" | "admin" | "maintainer" | "developer" | "viewer";
+export type MemberRole = "owner" | "admin" | "maintainer" | "developer" | "viewer" | "isms-manager" | "dpo" | "security-lead";
 
 export interface Member {
   id: string;
@@ -190,6 +190,8 @@ export interface PRAssessment {
   controlEvaluations: ControlEvaluation[];
   requiredApprovals: RequiredApproval[];
   evidence: Evidence;
+  impactAssessment?: ImpactAssessment;
+  agentRun?: AgentRunMeta;
 }
 
 // ─── Merge Gate ───────────────────────────────────────────────────────────────
@@ -257,6 +259,70 @@ export interface AuditEntry {
   targetLabel: string;
   metadata: Record<string, string | number | boolean>;
   createdAt: string;
+}
+
+// ─── SLA & Incidents ────────────────────────────────────────────────────────
+
+export type SLAStatus = "open" | "at-risk" | "breached" | "resolved";
+
+export type IncidentCategory = "data-leak" | "vulnerability" | "unauthorized-access" | "supply-chain" | "misconfiguration" | "other";
+
+export interface Incident {
+  id: string;
+  did: string; // AT-URI
+  issueNumber: number;
+  title: string;
+  repoId: string;
+  repoSlug: string;
+  severity: RiskTier; // critical | high | medium | low
+  category: IncidentCategory;
+  affectedPackage?: string;
+  cveIds: string[];
+  description: string;
+  linkedPRId?: string;
+  status: "open" | "in-progress" | "resolved" | "closed";
+  sla: {
+    status: SLAStatus;
+    deadline: string; // ISO datetime
+    hoursRemaining: number;
+    maxResolutionHours: number;
+    escalationAfterHours: number;
+    resolvedAt?: string;
+    resolvedBy?: string;
+  };
+  createdAt: string;
+}
+
+// ─── Impact Assessment ────────────────────────────────────────────────────────
+
+export interface ImpactEdge {
+  downstreamRepoSlug: string;
+  downstreamRepoName: string;
+  sourcePath: string;
+  targetPath: string;
+  dependencyType: "api-call" | "import" | "shared-model" | "event-consumer" | "database-shared";
+  reason: string;
+  actionRequired: "update-required" | "review-recommended" | "no-action";
+}
+
+export interface ImpactAssessment {
+  prId: string;
+  riskLevel: RiskTier;
+  summary: string;
+  affectedEdges: ImpactEdge[];
+}
+
+// ─── Agent Run Metadata ───────────────────────────────────────────────────────
+
+export interface AgentRunMeta {
+  version: string;
+  durationMs: number;
+  claudeTokensIn: number;
+  claudeTokensOut: number;
+  scansRun: string[];
+  recordsWritten: number;
+  startedAt: string;
+  completedAt: string;
 }
 
 // ─── Dependency Graph ────────────────────────────────────────────────────────

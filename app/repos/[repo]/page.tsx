@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Star, GitFork, GitPullRequest, Shield, Users, Lock, Tag, FileText } from "lucide-react";
+import { Star, GitFork, GitPullRequest, Shield, Users, Lock, Tag, FileText, Settings } from "lucide-react";
 import { Shell } from "@/components/layout/Shell";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
@@ -11,7 +11,7 @@ import { ComplianceScore } from "@/components/compliance/ComplianceScore";
 import { mockRepos, mockPolicyPacks, mockPRs, mockMembers } from "@/lib/mock-data";
 import { complianceStatusBg, languageDot, formatRelativeTime, cn } from "@/lib/utils";
 
-type Tab = "compliance" | "codeowners" | "policies";
+type Tab = "compliance" | "codeowners" | "policies" | "owners-link" | "settings-link";
 
 export default function RepoDetailPage({ params }: { params: { repo: string } }) {
   const [activeTab, setActiveTab] = useState<Tab>("compliance");
@@ -19,20 +19,22 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
   const packs = mockPolicyPacks.filter((p) => repo.policyPacks.includes(p.id));
   const repoPRs = mockPRs.filter((pr) => pr.repoId === repo.id);
 
-  const tabs: { id: Tab; label: string; icon: React.ElementType }[] = [
+  const tabs: { id: Tab; label: string; icon: React.ElementType; external?: string }[] = [
     { id: "compliance", label: "Compliance", icon: Shield },
     { id: "codeowners", label: "Code Owners", icon: Users },
     { id: "policies", label: "Bound Policies", icon: FileText },
+    { id: "owners-link", label: "Owners", icon: Users, external: `/repos/${repo.slug}/owners` },
+    { id: "settings-link", label: "Settings", icon: Settings, external: `/repos/${repo.slug}/settings` },
   ];
 
   // Estimated compliance score per repo
   const scoreMap: Record<string, number> = {
-    "api-core": 91,
-    "user-datastore": 88,
-    "notify-service": 62,
-    "sec-tooling": 96,
-    "vuln-scanner": 84,
-    "ml-pipeline": 31,
+    "patient-service": 41,
+    "billing-service": 97,
+    "auth-service": 78,
+    "user-service": 67,
+    "notification-service": 88,
+    "analytics-pipeline": 52,
   };
   const score = scoreMap[repo.slug] ?? 75;
 
@@ -102,13 +104,29 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
           <div className="flex gap-0 border-b border-zinc-800">
             {tabs.map((tab) => {
               const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              if (tab.external) {
+                return (
+                  <Link
+                    key={tab.id}
+                    href={tab.external}
+                    className={cn(
+                      "flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors",
+                      "border-transparent text-zinc-500 hover:text-zinc-300"
+                    )}
+                  >
+                    <Icon size={13} />
+                    {tab.label}
+                  </Link>
+                );
+              }
               return (
                 <button
                   key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
+                  onClick={() => setActiveTab(tab.id as Tab)}
                   className={cn(
                     "flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors",
-                    activeTab === tab.id
+                    isActive
                       ? "border-blue-500 text-blue-400"
                       : "border-transparent text-zinc-500 hover:text-zinc-300"
                   )}
