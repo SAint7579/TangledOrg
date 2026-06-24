@@ -77,6 +77,12 @@ export async function fetchMembers(orgRkey: string) {
   return apiFetch<{ members: any[]; roles: any[]; teams: any[] }>(`/api/org/${orgRkey}/members`);
 }
 
+export async function addMember(body: {
+  handle: string; orgUri: string; roleUri?: string;
+}) {
+  return apiPost<{ membership: any; did: string; handle: string }>("/api/org/members", body);
+}
+
 // ── Repos ───────────────────────────────────────────────────────────────────
 
 export async function fetchRepos() {
@@ -93,6 +99,37 @@ export async function createRepoProfile(rkey: string, body: {
   riskTier?: string; enforcementMode?: string; description?: string;
 }) {
   return apiPost(`/api/repos/${rkey}/profile`, body);
+}
+
+export async function fetchRepoIssues(rkey: string) {
+  return apiFetch<{
+    issues: {
+      id: string; uri: string; title: string; body: string;
+      state: "open" | "closed"; createdAt: string;
+      mentions: string[]; references: string[];
+    }[];
+  }>(`/api/repos/${rkey}/issues`);
+}
+
+export async function fetchRepoPulls(rkey: string) {
+  return apiFetch<{
+    pulls: {
+      id: string; uri: string; title: string; body: string;
+      status: "open" | "closed" | "merged"; createdAt: string;
+      sourceBranch: string; targetBranch: string; rounds: unknown[];
+    }[];
+  }>(`/api/repos/${rkey}/pulls`);
+}
+
+export async function fetchRepoTree(rkey: string, ref = "main", path = "") {
+  const params = new URLSearchParams({ ref });
+  if (path) params.set("path", path);
+  return apiFetch<Record<string, unknown>>(`/api/repos/${rkey}/tree?${params}`);
+}
+
+export async function fetchRepoLog(rkey: string, ref = "main", limit = 20) {
+  const params = new URLSearchParams({ ref, limit: String(limit) });
+  return apiFetch<Record<string, unknown>>(`/api/repos/${rkey}/log?${params}`);
 }
 
 // ── Policies ────────────────────────────────────────────────────────────────

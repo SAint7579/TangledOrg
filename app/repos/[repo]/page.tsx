@@ -1,28 +1,54 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
-import { Shield, Users, Lock, FileText, Settings, AlertCircle } from "lucide-react";
+import {
+  Shield, Lock, FileText, Settings, AlertCircle,
+  Code2, GitPullRequest, Folder, File, ChevronRight,
+} from "lucide-react";
 import { Shell } from "@/components/layout/Shell";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { RiskBadge } from "@/components/compliance/RiskBadge";
-import { fetchRepos, fetchRepoProfile, fetchPolicies, fetchIncidents } from "@/lib/api";
+import {
+  fetchRepos, fetchRepoProfile, fetchPolicies, fetchIncidents,
+  fetchRepoIssues, fetchRepoPulls, fetchRepoTree,
+} from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-type Tab = "compliance" | "policies";
+type Tab = "code" | "issues" | "pulls" | "compliance" | "policies";
 
 const REGULATION_LABELS: Record<string, string> = {
   "iso-27001": "ISO 27001", gdpr: "GDPR", "eu-ai-act": "EU AI Act",
   soc2: "SOC 2", hipaa: "HIPAA", "pci-dss": "PCI-DSS",
 };
 
+function formatDate(iso: string) {
+  if (!iso) return "";
+  try {
+    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  } catch {
+    return iso;
+  }
+}
+
+function formatSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export default function RepoDetailPage({ params }: { params: { repo: string } }) {
-  const [activeTab, setActiveTab] = useState<Tab>("compliance");
+  const [activeTab, setActiveTab] = useState<Tab>("code");
   const [repo, setRepo] = useState<any>(null);
   const [profile, setProfile] = useState<any>(null);
   const [policies, setPolicies] = useState<any[]>([]);
   const [incidents, setIncidents] = useState<any[]>([]);
+  const [issues, setIssues] = useState<any[]>([]);
+  const [pulls, setPulls] = useState<any[]>([]);
+  const [treeEntries, setTreeEntries] = useState<any[]>([]);
+  const [treePath, setTreePath] = useState("");
+  const [treeLoading, setTreeLoading] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -32,15 +58,35 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
       fetchRepoProfile(rkey),
       fetchPolicies(),
       fetchIncidents(),
-    ]).then(([reposData, profileData, policiesData, incidentsData]) => {
+      fetchRepoIssues(rkey),
+      fetchRepoPulls(rkey),
+    ]).then(([reposData, profileData, policiesData, incidentsData, issuesData, pullsData]) => {
       const r = reposData?.repos?.find((r: any) => r.id === rkey);
       setRepo(r || { id: rkey, name: rkey, knot: "" });
       setProfile(profileData?.profile || null);
       setPolicies(policiesData?.policyPacks || []);
       setIncidents((incidentsData?.incidents || []).filter((i: any) => (i.repo || "").includes(rkey)));
+      setIssues(issuesData?.issues || []);
+      setPulls(pullsData?.pulls || []);
       setLoading(false);
     });
   }, [params.repo]);
+
+  const loadTree = useCallback((path: string) => {
+    setTreeLoading(true);
+    fetchRepoTree(params.repo, "main", path).then((data) => {
+      const entries = (data as any)?.entries || (data as any)?.tree || [];
+      setTreeEntries(Array.isArray(entries) ? entries : []);
+      setTreePath(path);
+      setTreeLoading(false);
+    });
+  }, [params.repo]);
+
+  useEffect(() => {
+    if (!loading && activeTab === "code" && treeEntries.length === 0) {
+      loadTree("");
+    }
+  }, [loading, activeTab, treeEntries.length, loadTree]);
 
   if (loading) {
     return (
@@ -52,19 +98,20 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
     );
   }
 
-  const openIssues = incidents.filter((i: any) => i.status !== "resolved");
+  const openIssues = issues.filter((i: any) => i.state === "open");
+  const openPulls = pulls.filter((p: any) => p.status === "open");
   const boundPolicies = policies.filter((p: any) =>
     p.bindings?.some((b: any) => (b.repo || "").includes(repo.id))
   );
 
-  const tabs: { id: Tab; label: string; icon: React.ElementType; external?: string; badge?: number }[] = [
+  const pathParts = treePath ? treePath.split("/") : [];
+
+  const tabs: { id: Tab; label: string; icon: React.ElementType; badge?: number }[] = [
+    { id: "code", label: "Code", icon: Code2 },
+    { id: "issues", label: "Issues", icon: AlertCircle, badge: openIssues.length },
+    { id: "pulls", label: "Pull Requests", icon: GitPullRequest, badge: openPulls.length },
     { id: "compliance", label: "Compliance Profile", icon: Shield },
     { id: "policies", label: "Bound Policies", icon: FileText },
-  ];
-
-  const externalLinks = [
-    { label: "Issues", icon: AlertCircle, href: `/issues`, badge: openIssues.length },
-    { label: "Settings", icon: Settings, href: `/repos/${repo.id}/settings` },
   ];
 
   return (
@@ -85,10 +132,16 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
               {repo.uri && <span className="font-mono text-zinc-600 text-[10px]">{repo.uri.substring(0, 32)}...</span>}
             </div>
           </div>
+          <Link
+            href={`/repos/${repo.id}/settings`}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-zinc-500 hover:text-zinc-300 border border-zinc-800 hover:border-zinc-700 transition-colors"
+          >
+            <Settings size={12} /> Settings
+          </Link>
         </div>
 
         <div>
-          <div className="flex gap-0 border-b border-zinc-800">
+          <div className="flex gap-0 border-b border-zinc-800 overflow-x-auto">
             {tabs.map((tab) => {
               const Icon = tab.icon;
               return (
@@ -96,7 +149,7 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
                   className={cn(
-                    "flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors",
+                    "flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap",
                     activeTab === tab.id
                       ? "border-blue-500 text-blue-400"
                       : "border-transparent text-zinc-500 hover:text-zinc-300"
@@ -104,28 +157,193 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
                 >
                   <Icon size={13} />
                   {tab.label}
-                </button>
-              );
-            })}
-            {externalLinks.map((link) => {
-              const Icon = link.icon;
-              return (
-                <Link
-                  key={link.label}
-                  href={link.href}
-                  className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px border-transparent text-zinc-500 hover:text-zinc-300 transition-colors"
-                >
-                  <Icon size={13} />
-                  {link.label}
-                  {link.badge !== undefined && link.badge > 0 && (
-                    <span className="text-[9px] font-mono bg-zinc-800 text-zinc-400 px-1 py-px">{link.badge}</span>
+                  {tab.badge !== undefined && tab.badge > 0 && (
+                    <span className="text-[9px] font-mono bg-zinc-800 text-zinc-400 px-1.5 py-px rounded-full">
+                      {tab.badge}
+                    </span>
                   )}
-                </Link>
+                </button>
               );
             })}
           </div>
 
           <div className="mt-4">
+            {/* ── Code Tab ─────────────────────────── */}
+            {activeTab === "code" && (
+              <Card padding={false}>
+                {pathParts.length > 0 && (
+                  <div className="flex items-center gap-1 px-4 py-2.5 border-b border-zinc-800 text-xs">
+                    <button onClick={() => loadTree("")} className="text-blue-400 hover:text-blue-300 font-mono">
+                      {repo.name}
+                    </button>
+                    {pathParts.map((part, i) => {
+                      const subPath = pathParts.slice(0, i + 1).join("/");
+                      const isLast = i === pathParts.length - 1;
+                      return (
+                        <span key={subPath} className="flex items-center gap-1">
+                          <ChevronRight size={10} className="text-zinc-600" />
+                          {isLast ? (
+                            <span className="text-zinc-300 font-mono">{part}</span>
+                          ) : (
+                            <button onClick={() => loadTree(subPath)} className="text-blue-400 hover:text-blue-300 font-mono">
+                              {part}
+                            </button>
+                          )}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+                {treeLoading ? (
+                  <div className="flex items-center justify-center py-12">
+                    <span className="text-zinc-500 text-sm animate-pulse">Loading tree...</span>
+                  </div>
+                ) : treeEntries.length === 0 ? (
+                  <div className="text-center py-12">
+                    <Code2 size={32} className="text-zinc-700 mx-auto mb-3" />
+                    <p className="text-sm text-zinc-500">No files found. The knot server may be unreachable.</p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-zinc-800/60">
+                    {[...treeEntries]
+                      .sort((a, b) => {
+                        const aDir = a.type === "tree" || a.mode === "040000" ? 0 : 1;
+                        const bDir = b.type === "tree" || b.mode === "040000" ? 0 : 1;
+                        if (aDir !== bDir) return aDir - bDir;
+                        return (a.name || "").localeCompare(b.name || "");
+                      })
+                      .map((entry: any) => {
+                        const isDir = entry.type === "tree" || entry.mode === "040000";
+                        const name = entry.name || entry.path || "";
+                        const fullPath = treePath ? `${treePath}/${name}` : name;
+                        return (
+                          <button
+                            key={name}
+                            onClick={() => isDir && loadTree(fullPath)}
+                            className={cn(
+                              "flex items-center gap-3 px-4 py-2 w-full text-left hover:bg-zinc-800/40 transition-colors",
+                              !isDir && "cursor-default"
+                            )}
+                          >
+                            {isDir ? (
+                              <Folder size={14} className="text-blue-400 flex-shrink-0" />
+                            ) : (
+                              <File size={14} className="text-zinc-500 flex-shrink-0" />
+                            )}
+                            <span className={cn("text-sm font-mono flex-1", isDir ? "text-blue-400" : "text-zinc-300")}>
+                              {name}
+                            </span>
+                            {entry.size != null && !isDir && (
+                              <span className="text-[10px] text-zinc-600 font-mono">{formatSize(entry.size)}</span>
+                            )}
+                          </button>
+                        );
+                      })}
+                  </div>
+                )}
+              </Card>
+            )}
+
+            {/* ── Issues Tab ─────────────────────────── */}
+            {activeTab === "issues" && (
+              <div className="space-y-2">
+                {issues.length === 0 ? (
+                  <Card>
+                    <div className="text-center py-8">
+                      <AlertCircle size={32} className="text-zinc-700 mx-auto mb-3" />
+                      <p className="text-sm text-zinc-500">No issues found for this repository.</p>
+                    </div>
+                  </Card>
+                ) : (
+                  issues.map((issue: any) => (
+                    <Card key={issue.id} className="hover:border-zinc-700 transition-colors">
+                      <div className="flex items-start gap-3">
+                        <AlertCircle
+                          size={16}
+                          className={cn(
+                            "mt-0.5 flex-shrink-0",
+                            issue.state === "open" ? "text-green-400" : "text-zinc-600"
+                          )}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-medium text-zinc-200">{issue.title}</span>
+                            <Badge
+                              variant={issue.state === "open" ? "success" : "neutral"}
+                              size="sm"
+                            >
+                              {issue.state}
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-zinc-500 mt-1">
+                            opened {formatDate(issue.createdAt)}
+                          </p>
+                        </div>
+                      </div>
+                    </Card>
+                  ))
+                )}
+              </div>
+            )}
+
+            {/* ── Pull Requests Tab ─────────────────────────── */}
+            {activeTab === "pulls" && (
+              <div className="space-y-2">
+                {pulls.length === 0 ? (
+                  <Card>
+                    <div className="text-center py-8">
+                      <GitPullRequest size={32} className="text-zinc-700 mx-auto mb-3" />
+                      <p className="text-sm text-zinc-500">No pull requests found for this repository.</p>
+                    </div>
+                  </Card>
+                ) : (
+                  pulls.map((pr: any) => {
+                    const statusVariant = pr.status === "merged"
+                      ? "info"
+                      : pr.status === "open"
+                        ? "success"
+                        : "neutral";
+                    return (
+                      <Card key={pr.id} className="hover:border-zinc-700 transition-colors">
+                        <div className="flex items-start gap-3">
+                          <GitPullRequest
+                            size={16}
+                            className={cn(
+                              "mt-0.5 flex-shrink-0",
+                              pr.status === "merged" ? "text-purple-400"
+                                : pr.status === "open" ? "text-green-400"
+                                : "text-zinc-600"
+                            )}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-medium text-zinc-200">{pr.title}</span>
+                              <Badge variant={statusVariant} size="sm">
+                                {pr.status}
+                              </Badge>
+                            </div>
+                            <p className="text-xs text-zinc-500 mt-1">
+                              {pr.sourceBranch && pr.targetBranch && (
+                                <span className="font-mono">
+                                  {pr.sourceBranch}
+                                  <span className="text-zinc-600 mx-1">&rarr;</span>
+                                  {pr.targetBranch}
+                                </span>
+                              )}
+                              {pr.createdAt && (
+                                <span className="ml-2">{formatDate(pr.createdAt)}</span>
+                              )}
+                            </p>
+                          </div>
+                        </div>
+                      </Card>
+                    );
+                  })
+                )}
+              </div>
+            )}
+
+            {/* ── Compliance Tab ─────────────────────────── */}
             {activeTab === "compliance" && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {profile ? (
@@ -204,6 +422,7 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
               </div>
             )}
 
+            {/* ── Policies Tab ─────────────────────────── */}
             {activeTab === "policies" && (
               <div className="space-y-3">
                 {boundPolicies.length === 0 ? (

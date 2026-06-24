@@ -24,14 +24,14 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([fetchOrgs(), fetchRepos(), fetchIncidents()]).then(
-      ([orgs, repos, incidents]) => {
+    Promise.all([fetchOrgs(), fetchRepos(), fetchIncidents()])
+      .then(([orgs, repos, incidents]) => {
         setOrgData(orgs);
         setReposData(repos);
         setIncidentsData(incidents);
-        setLoading(false);
-      }
-    );
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, []);
 
   if (loading) {

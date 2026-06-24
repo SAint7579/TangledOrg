@@ -136,7 +136,7 @@ export default function PoliciesPage() {
     setBinding(true);
     await createPolicyBinding({
       repoUri: bindRepoUri,
-      policyPackUri: selectedPack.uri ?? selectedPack.id,
+      policyPackUri: selectedPack?.uri ?? selectedPack?.id ?? "",
     });
     const res = await fetchPolicies();
     setPoliciesData(res);
@@ -366,6 +366,7 @@ export default function PoliciesPage() {
           })}
         </div>
 
+        {selectedPack && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
           <div className="lg:col-span-2">
             <Card padding={false}>
@@ -558,6 +559,7 @@ export default function PoliciesPage() {
             </Card>
           </div>
         </div>
+        )}
       </div>
     </Shell>
   );

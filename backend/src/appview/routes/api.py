@@ -159,6 +159,50 @@ async def list_members(rkey: str, request: Request):
     }
 
 
+class AddMemberRequest(BaseModel):
+    handle: str
+    orgUri: str
+    roleUri: Optional[str] = None
+
+
+@router.post("/org/members")
+async def add_member(body: AddMemberRequest, request: Request):
+    """Add a member to the organization by handle."""
+    session = get_authenticated_session(request)
+
+    import httpx
+    member_did = ""
+    try:
+        resp = httpx.get(
+            f"{session['pds_issuer']}/xrpc/com.atproto.identity.resolveHandle",
+            params={"handle": body.handle},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            raise HTTPException(status_code=400, detail=f"Could not resolve handle: {body.handle}")
+        member_did = resp.json().get("did", "")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=400, detail=f"Could not resolve handle: {body.handle}")
+
+    if not member_did:
+        raise HTTPException(status_code=400, detail="Could not resolve DID")
+
+    now = datetime.now(timezone.utc).isoformat()
+    record = {
+        "org": body.orgUri,
+        "memberDid": member_did,
+        "invitedBy": session["did"],
+        "createdAt": now,
+    }
+    if body.roleUri:
+        record["role"] = body.roleUri
+
+    result = _create_record(session, "sh.tangled.governance.org.membership", record)
+    return {"membership": result, "did": member_did, "handle": body.handle}
+
+
 # ── Repos ────────────────────────────────────────────────────────────────────
 
 
@@ -196,6 +240,159 @@ async def get_repo_profile(rkey: str, request: Request):
         if rkey in p["value"].get("repo", ""):
             return {"profile": p["value"], "uri": p["uri"], "rkey": p["rkey"]}
     return {"profile": None}
+
+
+def _get_repo_record(session: dict, rkey: str) -> dict:
+    """Find a repo record by rkey and return its value dict (with knot, repoDid, etc.)."""
+    repos = _list_records(session, "sh.tangled.repo")
+    for r in repos:
+        if r["rkey"] == rkey:
+            return r
+    raise HTTPException(status_code=404, detail=f"Repo '{rkey}' not found")
+
+
+@router.get("/repos/{rkey}/issues")
+async def list_repo_issues(rkey: str, request: Request):
+    session = get_authenticated_session(request)
+    repo_rec = _get_repo_record(session, rkey)
+    repo_did = repo_rec["value"].get("repoDid", "")
+
+    issues = _list_records(session, "sh.tangled.repo.issue")
+    states = _list_records(session, "sh.tangled.repo.issue.state")
+
+    state_map: dict[str, str] = {}
+    for s in states:
+        val = s["value"]
+        issue_uri = val.get("issue", "")
+        state_val = val.get("state", "")
+        created = val.get("createdAt", "")
+        if issue_uri not in state_map or created > state_map.get(f"{issue_uri}__ts", ""):
+            state_map[issue_uri] = state_val
+            state_map[f"{issue_uri}__ts"] = created
+
+    result = []
+    for iss in issues:
+        val = iss["value"]
+        if val.get("repo") != repo_did:
+            continue
+        uri = iss["uri"]
+        raw_state = state_map.get(uri, "sh.tangled.repo.issue.state.open")
+        state_label = "closed" if raw_state.endswith(".closed") else "open"
+        result.append({
+            "id": iss["rkey"],
+            "uri": uri,
+            "title": val.get("title", ""),
+            "body": val.get("body", ""),
+            "state": state_label,
+            "createdAt": val.get("createdAt", ""),
+            "mentions": val.get("mentions", []),
+            "references": val.get("references", []),
+        })
+
+    result.sort(key=lambda x: x.get("createdAt", ""), reverse=True)
+    return {"issues": result}
+
+
+@router.get("/repos/{rkey}/pulls")
+async def list_repo_pulls(rkey: str, request: Request):
+    session = get_authenticated_session(request)
+    repo_rec = _get_repo_record(session, rkey)
+    repo_did = repo_rec["value"].get("repoDid", "")
+
+    pulls = _list_records(session, "sh.tangled.repo.pull")
+    statuses = _list_records(session, "sh.tangled.repo.pull.status")
+
+    status_map: dict[str, str] = {}
+    for s in statuses:
+        val = s["value"]
+        pull_uri = val.get("pull", "")
+        status_val = val.get("status", "")
+        created = val.get("createdAt", "")
+        if pull_uri not in status_map or created > status_map.get(f"{pull_uri}__ts", ""):
+            status_map[pull_uri] = status_val
+            status_map[f"{pull_uri}__ts"] = created
+
+    result = []
+    for pr in pulls:
+        val = pr["value"]
+        target = val.get("target", {})
+        target_repo = target if isinstance(target, str) else target.get("repo", "")
+        if repo_did and repo_did not in target_repo:
+            continue
+        uri = pr["uri"]
+        raw_status = status_map.get(uri, "sh.tangled.repo.pull.status.open")
+        if raw_status.endswith(".merged"):
+            status_label = "merged"
+        elif raw_status.endswith(".closed"):
+            status_label = "closed"
+        else:
+            status_label = "open"
+
+        source = val.get("source", {})
+        result.append({
+            "id": pr["rkey"],
+            "uri": uri,
+            "title": val.get("title", ""),
+            "body": val.get("body", ""),
+            "status": status_label,
+            "createdAt": val.get("createdAt", ""),
+            "sourceBranch": source.get("branch", "") if isinstance(source, dict) else str(source),
+            "targetBranch": target.get("branch", "") if isinstance(target, dict) else str(target),
+            "rounds": val.get("rounds", []),
+        })
+
+    result.sort(key=lambda x: x.get("createdAt", ""), reverse=True)
+    return {"pulls": result}
+
+
+@router.get("/repos/{rkey}/tree")
+async def get_repo_tree(rkey: str, request: Request, ref: str = "main", path: str = ""):
+    import httpx
+
+    session = get_authenticated_session(request)
+    repo_rec = _get_repo_record(session, rkey)
+    val = repo_rec["value"]
+    knot = val.get("knot", "")
+    repo_did = val.get("repoDid", "")
+
+    if not knot:
+        raise HTTPException(status_code=400, detail="Repo has no knot server configured")
+
+    params: dict[str, str] = {"repo": f"{repo_did}/{rkey}", "ref": ref}
+    if path:
+        params["path"] = path
+
+    try:
+        resp = httpx.get(f"https://{knot}/xrpc/sh.tangled.repo.tree", params=params, timeout=10)
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        return resp.json()
+    except httpx.ConnectError:
+        raise HTTPException(status_code=502, detail=f"Cannot reach knot server: {knot}")
+
+
+@router.get("/repos/{rkey}/log")
+async def get_repo_log(rkey: str, request: Request, ref: str = "main", limit: int = 20):
+    import httpx
+
+    session = get_authenticated_session(request)
+    repo_rec = _get_repo_record(session, rkey)
+    val = repo_rec["value"]
+    knot = val.get("knot", "")
+    repo_did = val.get("repoDid", "")
+
+    if not knot:
+        raise HTTPException(status_code=400, detail="Repo has no knot server configured")
+
+    params: dict[str, str | int] = {"repo": f"{repo_did}/{rkey}", "ref": ref, "limit": limit}
+
+    try:
+        resp = httpx.get(f"https://{knot}/xrpc/sh.tangled.repo.log", params=params, timeout=10)
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        return resp.json()
+    except httpx.ConnectError:
+        raise HTTPException(status_code=502, detail=f"Cannot reach knot server: {knot}")
 
 
 class RepoProfileCreate(BaseModel):

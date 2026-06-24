@@ -58,11 +58,13 @@ export function Sidebar() {
   const shortHandle = displayHandle.split(".")[0];
 
   useEffect(() => {
-    fetchOrgs().then(res => {
-      if (res?.organizations?.length) {
-        setOrgName(res.organizations[0].displayName || res.organizations[0].name);
-      }
-    });
+    fetchOrgs()
+      .then(res => {
+        if (res?.organizations?.length) {
+          setOrgName(res.organizations[0].displayName || res.organizations[0].name);
+        }
+      })
+      .catch(() => {});
   }, []);
 
   const handleLogout = async () => {
