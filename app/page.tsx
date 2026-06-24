@@ -9,7 +9,6 @@ import {
   AlertOctagon,
   ArrowRight,
   Zap,
-  Lock,
 } from "lucide-react";
 import { Shell } from "@/components/layout/Shell";
 import { Card } from "@/components/ui/Card";
@@ -80,9 +79,6 @@ export default function DashboardPage() {
               <div className="flex items-center gap-2 mb-2">
                 <Badge variant="info" size="sm">
                   <Zap size={9} className="mr-1" />AT Protocol
-                </Badge>
-                <Badge variant="neutral" size="sm">
-                  <Lock size={9} className="mr-1" />Claude-powered
                 </Badge>
               </div>
               <h1 className="text-2xl font-bold text-zinc-100 leading-tight">
@@ -243,7 +239,7 @@ export default function DashboardPage() {
               icon: Shield,
               color: "text-blue-400 bg-blue-500/10",
               title: "Automated on every PR",
-              body: "Semgrep, Gitleaks, and OSV-Scanner run automatically. Claude reasons about regulatory implications.",
+              body: "Semgrep, Gitleaks, and OSV-Scanner run automatically. An AI agent reasons about regulatory implications.",
             },
             {
               icon: Lock,
