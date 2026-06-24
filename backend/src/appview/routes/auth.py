@@ -17,6 +17,7 @@ from atproto_oauth import (
     make_pkce,
     dpop_post_form,
     jwk_to_key,
+    key_to_jwk,
     public_jwk,
 )
 
@@ -71,9 +72,9 @@ async def login(handle: str, request: Request):
     code_verifier, code_challenge = make_pkce()
     state = secrets.token_urlsafe(32)
 
-    dpop_private_jwk = generate_dpop_key()
-    private_key = jwk_to_key(dpop_private_jwk)
-    pub_jwk = public_jwk(dpop_private_jwk)
+    private_key = generate_dpop_key()
+    private_jwk = key_to_jwk(private_key)
+    pub_jwk = public_jwk(private_jwk)
 
     par_data = {
         "response_type": "code",
@@ -96,7 +97,7 @@ async def login(handle: str, request: Request):
         state=state,
         handle=handle,
         code_verifier=code_verifier,
-        dpop_private_key=json.dumps(dpop_private_jwk),
+        dpop_private_key=json.dumps(private_jwk),
         pds_issuer=pds_url,
     )
 
@@ -119,9 +120,9 @@ async def callback(code: str, state: str, request: Request):
     if not oauth_state:
         raise HTTPException(status_code=400, detail="Invalid or expired state")
 
-    dpop_private_jwk = json.loads(oauth_state["dpop_private_key"])
-    private_key = jwk_to_key(dpop_private_jwk)
-    pub_jwk = public_jwk(dpop_private_jwk)
+    private_jwk = json.loads(oauth_state["dpop_private_key"])
+    private_key = jwk_to_key(private_jwk)
+    pub_jwk = public_jwk(private_jwk)
 
     token_endpoint = discover_token_endpoint(oauth_state["pds_issuer"])
 
@@ -148,7 +149,7 @@ async def callback(code: str, state: str, request: Request):
         pds_issuer=oauth_state["pds_issuer"],
         access_token=access_token,
         refresh_token=tokens.get("refresh_token", ""),
-        dpop_private_key=json.dumps(dpop_private_jwk),
+        dpop_private_key=json.dumps(private_jwk),
         expires_at=tokens.get("expires_at"),
     )
 
