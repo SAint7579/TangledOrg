@@ -7,10 +7,10 @@ import {
   mockPRs,
   mockMembers,
   mockOrg,
-  mockIncidents,
+  mockIssues,
 } from "@/lib/mock-data";
 import { formatRelativeTime, cn } from "@/lib/utils";
-import type { ComplianceStatus } from "@/types";
+import type { ComplianceStatus, IssueStatus } from "@/types";
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
@@ -44,13 +44,20 @@ const statusColor: Record<ComplianceStatus, string> = {
   unknown:         "text-zinc-500",
 };
 
+const issueStatusColor: Record<IssueStatus, string> = {
+  open:          "text-red-400",
+  "in-progress": "text-amber-400",
+  resolved:      "text-green-400",
+  closed:        "text-zinc-600",
+};
+
 export default function DashboardPage() {
   const compliantCount  = mockRepos.filter(r => r.complianceStatus === "compliant").length;
   const atRiskCount     = mockRepos.filter(r => r.complianceStatus === "at-risk").length;
   const nonCompliant    = mockRepos.filter(r => r.complianceStatus === "non-compliant").length;
   const blockedPRs      = mockPRs.filter(pr => pr.assessment?.mergeGate === "blocked").length;
-  const openIncidents   = mockIncidents.filter(i => i.status === "open" || i.status === "in-progress");
-  const orgScore        = 87;
+  const openIssues      = mockIssues.filter(i => i.status !== "resolved");
+  const orgScore        = 72;
 
   return (
     <Shell breadcrumbs={[{ label: "Dashboard" }]}>
@@ -108,51 +115,81 @@ export default function DashboardPage() {
                   <p className="text-[10px] text-zinc-600 uppercase tracking-[0.12em]">blocked prs</p>
                 </div>
                 <div>
-                  <span className="text-xl font-mono font-semibold text-orange-400">{openIncidents.length}</span>
-                  <p className="text-[10px] text-zinc-600 uppercase tracking-[0.12em]">open incidents</p>
+                  <span className="text-xl font-mono font-semibold text-red-400">{openIssues.length}</span>
+                  <p className="text-[10px] text-zinc-600 uppercase tracking-[0.12em]">open issues</p>
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* ── Incidents ───────────────────────────────────────────── */}
-        {openIncidents.length > 0 && (
+        {/* ── Open Issues ─────────────────────────────────────────── */}
+        {openIssues.length > 0 && (
           <div>
             <SectionLabel>
-              Incidents — {openIncidents.length} open
+              Issues — {openIssues.length} open
             </SectionLabel>
             <div className="border border-zinc-800">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-zinc-800 bg-zinc-900/60">
-                    {["ID", "Repo", "Category", "Severity", "SLA"].map(h => (
+                    {["ID", "Repo", "Title", "Severity", "Assigned To", "SLA", "Status", "Linked PR"].map(h => (
                       <th key={h} className="text-left px-4 py-2 text-[10px] font-semibold text-zinc-600 uppercase tracking-[0.12em]">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-800/60">
-                  {openIncidents.map(inc => {
-                    const slaAtRisk = inc.sla.status === "at-risk" || inc.sla.status === "breached";
+                  {openIssues.map(issue => {
+                    const assignee = mockMembers.find(m => m.handle === issue.assigneeHandle);
+                    const urgent = issue.sla.hoursRemaining <= 24;
+                    const slaLabel = issue.sla.hoursRemaining >= 24
+                      ? `${Math.ceil(issue.sla.hoursRemaining / 24)}d`
+                      : `${issue.sla.hoursRemaining}h`;
                     return (
-                      <tr key={inc.id} className="hover:bg-zinc-800/30 transition-colors group">
-                        <td className="px-4 py-2.5">
-                          <Link href={`/incidents/${inc.id}`} className="font-mono text-xs font-semibold text-blue-400 hover:text-blue-300">
-                            {inc.id}
+                      <tr key={issue.id} className="hover:bg-zinc-800/30 transition-colors group">
+                        <td className="px-4 py-2.5 whitespace-nowrap">
+                          <Link href={`/issues/${issue.id}`} className="font-mono text-xs font-semibold text-blue-400 hover:text-blue-300">
+                            {issue.id}
                           </Link>
                         </td>
-                        <td className="px-4 py-2.5 font-mono text-xs text-zinc-400">{inc.repoSlug}</td>
-                        <td className="px-4 py-2.5 font-mono text-xs text-zinc-500">{inc.category.replace("-", " ")}</td>
-                        <td className="px-4 py-2.5">
-                          <RiskBadge tier={inc.severity} size="sm" />
+                        <td className="px-4 py-2.5 font-mono text-[11px] text-zinc-500 whitespace-nowrap">
+                          {issue.repoSlug}
+                        </td>
+                        <td className="px-4 py-2.5 max-w-xs">
+                          <Link
+                            href={`/issues/${issue.id}`}
+                            className="text-zinc-200 hover:text-white text-xs transition-colors line-clamp-1"
+                          >
+                            {issue.title}
+                          </Link>
                         </td>
                         <td className="px-4 py-2.5">
-                          <span className={cn("font-mono text-[11px]", slaAtRisk ? "text-amber-400" : "text-zinc-500")}>
-                            {inc.sla.hoursRemaining >= 24
-                              ? `${Math.ceil(inc.sla.hoursRemaining / 24)}d remaining`
-                              : `${inc.sla.hoursRemaining}h remaining`}
-                            {slaAtRisk && " ⚠"}
+                          <RiskBadge tier={issue.severity} size="sm" />
+                        </td>
+                        <td className="px-4 py-2.5 font-mono text-[11px] text-zinc-400 whitespace-nowrap">
+                          {assignee ? assignee.handle.split(".")[0] : issue.assigneeHandle.split(".")[0]}
+                        </td>
+                        <td className="px-4 py-2.5 whitespace-nowrap">
+                          <span className={cn("font-mono text-[11px]", urgent ? "text-amber-400" : "text-zinc-500")}>
+                            {slaLabel} remaining{urgent && " ⚠"}
                           </span>
+                        </td>
+                        <td className="px-4 py-2.5 whitespace-nowrap">
+                          <span className={cn("font-mono text-[11px] font-medium", issueStatusColor[issue.status])}>
+                            {issue.status === "in-progress" ? "in progress" : issue.status}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 whitespace-nowrap">
+                          {issue.linkedPRId ? (
+                            <Link
+                              href={`/repos/${issue.repoSlug}/pr/${issue.linkedPRId}`}
+                              className="font-mono text-[11px] text-blue-400 hover:text-blue-300"
+                            >
+                              {issue.linkedPRId}
+                            </Link>
+                          ) : (
+                            <span className="font-mono text-[11px] text-zinc-700">—</span>
+                          )}
                         </td>
                       </tr>
                     );

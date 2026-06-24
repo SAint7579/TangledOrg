@@ -11,7 +11,7 @@ import {
   BookOpen,
   Network,
   Users,
-  AlertOctagon,
+  AlertCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/ui/Avatar";
@@ -27,7 +27,7 @@ const navGroups = [
   {
     label: "Monitor",
     items: [
-      { href: "/incidents", label: "Incidents", icon: AlertOctagon },
+      { href: "/issues", label: "Issues", icon: AlertCircle },
       { href: "/repos", label: "Repos", icon: FolderGit2 },
     ],
   },

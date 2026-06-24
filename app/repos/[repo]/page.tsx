@@ -2,27 +2,38 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Star, GitFork, GitPullRequest, Shield, Users, Lock, Tag, FileText, Settings } from "lucide-react";
+import { Star, GitFork, GitPullRequest, Shield, Users, Lock, Tag, FileText, Settings, AlertCircle } from "lucide-react";
 import { Shell } from "@/components/layout/Shell";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { RiskBadge } from "@/components/compliance/RiskBadge";
 import { ComplianceScore } from "@/components/compliance/ComplianceScore";
-import { mockRepos, mockPolicyPacks, mockPRs, mockMembers } from "@/lib/mock-data";
+import { mockRepos, mockPolicyPacks, mockPRs, mockMembers, mockIssues } from "@/lib/mock-data";
 import { complianceStatusBg, languageDot, formatRelativeTime, cn } from "@/lib/utils";
+import type { IssueStatus } from "@/types";
 
-type Tab = "compliance" | "codeowners" | "policies" | "owners-link" | "settings-link";
+type Tab = "compliance" | "codeowners" | "policies" | "issues-link" | "owners-link" | "settings-link";
+
+const issueStatusColor: Record<IssueStatus, string> = {
+  open:          "text-red-400",
+  "in-progress": "text-amber-400",
+  resolved:      "text-green-400",
+  closed:        "text-zinc-600",
+};
 
 export default function RepoDetailPage({ params }: { params: { repo: string } }) {
   const [activeTab, setActiveTab] = useState<Tab>("compliance");
   const repo = mockRepos.find((r) => r.slug === params.repo) ?? mockRepos[0];
   const packs = mockPolicyPacks.filter((p) => repo.policyPacks.includes(p.id));
   const repoPRs = mockPRs.filter((pr) => pr.repoId === repo.id);
+  const repoIssues = mockIssues.filter((i) => i.repoSlug === repo.slug);
+  const openIssues = repoIssues.filter((i) => i.status !== "resolved");
 
-  const tabs: { id: Tab; label: string; icon: React.ElementType; external?: string }[] = [
+  const tabs: { id: Tab; label: string; icon: React.ElementType; external?: string; badge?: number }[] = [
     { id: "compliance", label: "Compliance", icon: Shield },
     { id: "codeowners", label: "Code Owners", icon: Users },
     { id: "policies", label: "Bound Policies", icon: FileText },
+    { id: "issues-link", label: "Issues", icon: AlertCircle, external: `/repos/${repo.slug}/issues`, badge: openIssues.length },
     { id: "owners-link", label: "Owners", icon: Users, external: `/repos/${repo.slug}/owners` },
     { id: "settings-link", label: "Settings", icon: Settings, external: `/repos/${repo.slug}/settings` },
   ];
@@ -32,9 +43,6 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
     "patient-service": 41,
     "billing-service": 97,
     "auth-service": 78,
-    "user-service": 67,
-    "notification-service": 88,
-    "analytics-pipeline": 52,
   };
   const score = scoreMap[repo.slug] ?? 75;
 
@@ -117,6 +125,11 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
                   >
                     <Icon size={13} />
                     {tab.label}
+                    {tab.badge !== undefined && tab.badge > 0 && (
+                      <span className="text-[9px] font-mono bg-zinc-800 text-zinc-400 px-1 py-px leading-none">
+                        {tab.badge}
+                      </span>
+                    )}
                   </Link>
                 );
               }

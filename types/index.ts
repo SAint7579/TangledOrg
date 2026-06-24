@@ -325,6 +325,39 @@ export interface AgentRunMeta {
   completedAt: string;
 }
 
+// ─── Issues ──────────────────────────────────────────────────────────────────
+
+export type IssueStatus = "open" | "in-progress" | "resolved" | "closed";
+export type IssueCategory = "data-leak" | "vulnerability" | "unauthorized-access" | "supply-chain" | "misconfiguration" | "other";
+
+export interface Issue {
+  id: string;
+  did: string; // AT-URI
+  number: number;
+  title: string;
+  description: string;
+  repoId: string;
+  repoSlug: string;
+  severity: RiskTier;
+  category: IssueCategory;
+  affectedPackage?: string;
+  cveIds: string[];
+  assigneeHandle: string;
+  linkedPRId?: string;
+  status: IssueStatus;
+  sla: {
+    status: SLAStatus;
+    deadline: string;
+    hoursRemaining: number;
+    maxResolutionHours: number;
+    escalationAfterHours: number;
+    resolvedAt?: string;
+    resolvedBy?: string;
+  };
+  createdAt: string;
+  createdByHandle: string;
+}
+
 // ─── Dependency Graph ────────────────────────────────────────────────────────
 
 export interface DependencyNode {
