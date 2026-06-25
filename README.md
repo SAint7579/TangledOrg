@@ -1,5 +1,6 @@
 # Tangled Org
 
+
 **Protocol-native organization governance, compliance, and code-safety layer for [Tangled](https://tangled.org).**
 
 Tangled Org gives regulated software teams organizational structure, policy enforcement, dependency tracking, and audit-ready compliance — all stored as signed, portable ATProto records.

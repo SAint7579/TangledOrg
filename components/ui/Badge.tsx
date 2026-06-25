@@ -7,13 +7,34 @@ interface BadgeProps {
   className?: string;
 }
 
-const variantClasses = {
-  default:  "text-zinc-400 border-zinc-700",
-  success:  "text-green-400 border-green-900",
-  warning:  "text-amber-400 border-amber-900",
-  danger:   "text-red-400 border-red-900",
-  info:     "text-blue-400 border-blue-900",
-  neutral:  "text-zinc-500 border-zinc-800",
+const variantStyles: Record<
+  NonNullable<BadgeProps["variant"]>,
+  React.CSSProperties
+> = {
+  default: {
+    color: "var(--badge-default-text)",
+    borderColor: "var(--badge-default-border)",
+  },
+  neutral: {
+    color: "var(--text-muted)",
+    borderColor: "var(--border-subtle)",
+  },
+  success: {
+    color: "var(--badge-success-text)",
+    borderColor: "var(--badge-success-border)",
+  },
+  warning: {
+    color: "var(--badge-warning-text)",
+    borderColor: "var(--badge-warning-border)",
+  },
+  danger: {
+    color: "var(--badge-danger-text)",
+    borderColor: "var(--badge-danger-border)",
+  },
+  info: {
+    color: "var(--badge-info-text)",
+    borderColor: "var(--badge-info-border)",
+  },
 };
 
 const sizeClasses = {
@@ -21,15 +42,20 @@ const sizeClasses = {
   md: "px-2 py-px text-[11px]",
 };
 
-export function Badge({ children, variant = "default", size = "md", className }: BadgeProps) {
+export function Badge({
+  children,
+  variant = "default",
+  size = "md",
+  className,
+}: BadgeProps) {
   return (
     <span
       className={cn(
         "inline-flex items-center border font-mono tracking-wide",
-        variantClasses[variant],
         sizeClasses[size],
         className
       )}
+      style={variantStyles[variant]}
     >
       {children}
     </span>

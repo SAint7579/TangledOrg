@@ -18,6 +18,18 @@
   --table-head-bg: rgba(21, 21, 26, 0.04);
   --hover-bg: rgba(21, 21, 26, 0.05);
   --input-bg: rgba(255, 255, 255, 0.8);
+
+  /* Badge variant colors — light mode */
+  --badge-default-text: rgba(21, 21, 26, 0.5);
+  --badge-default-border: rgba(21, 21, 26, 0.15);
+  --badge-success-text: #15803d;
+  --badge-success-border: rgba(21, 128, 61, 0.25);
+  --badge-warning-text: #b45309;
+  --badge-warning-border: rgba(180, 83, 9, 0.25);
+  --badge-danger-text: #b91c1c;
+  --badge-danger-border: rgba(185, 28, 28, 0.25);
+  --badge-info-text: #1d4ed8;
+  --badge-info-border: rgba(29, 78, 216, 0.25);
 }
 
 .dark {
@@ -31,6 +43,18 @@
   --table-head-bg: rgba(230, 230, 230, 0.03);
   --hover-bg: rgba(230, 230, 230, 0.04);
   --input-bg: rgba(230, 230, 230, 0.05);
+
+  /* Badge variant colors — dark mode */
+  --badge-default-text: rgba(230, 230, 230, 0.5);
+  --badge-default-border: rgba(230, 230, 230, 0.15);
+  --badge-success-text: #86efac;
+  --badge-success-border: rgba(134, 239, 172, 0.2);
+  --badge-warning-text: #fde68a;
+  --badge-warning-border: rgba(253, 230, 138, 0.2);
+  --badge-danger-text: #fca5a5;
+  --badge-danger-border: rgba(252, 165, 165, 0.2);
+  --badge-info-text: #93c5fd;
+  --badge-info-border: rgba(147, 197, 253, 0.2);
 }
 
 * {
@@ -83,6 +107,10 @@ html:not(.dark) .hsb-main .border-zinc-800,
 html:not(.dark) .hsb-main .border-zinc-800\/70 {
   border-color: rgba(21, 21, 26, 0.1) !important;
 }
+html:not(.dark) .hsb-main .border-zinc-700,
+html:not(.dark) .hsb-main .border-zinc-700\/50 {
+  border-color: rgba(21, 21, 26, 0.1) !important;
+}
 html:not(.dark) .hsb-main .divide-zinc-800\/60 > * + * {
   border-color: rgba(21, 21, 26, 0.07) !important;
 }
@@ -95,8 +123,12 @@ html:not(.dark) .hsb-main .bg-zinc-900\/40 {
 html:not(.dark) .hsb-main .bg-zinc-900\/60 {
   background-color: rgba(21, 21, 26, 0.04) !important;
 }
+/* bg-zinc-800 with no opacity modifier (used by inline tag badges) */
+html:not(.dark) .hsb-main .bg-zinc-800 { background-color: rgba(21, 21, 26, 0.06) !important; }
+html:not(.dark) .hsb-main .bg-zinc-800\/20 { background-color: rgba(21, 21, 26, 0.03) !important; }
 html:not(.dark) .hsb-main .bg-zinc-800\/30 { background-color: rgba(21, 21, 26, 0.04) !important; }
 html:not(.dark) .hsb-main .bg-zinc-800\/50 { background-color: rgba(21, 21, 26, 0.06) !important; }
+html:not(.dark) .hsb-main .hover\:bg-zinc-800\/20:hover { background-color: rgba(21, 21, 26, 0.04) !important; }
 html:not(.dark) .hsb-main .hover\:bg-zinc-800\/30:hover { background-color: rgba(21, 21, 26, 0.05) !important; }
 
 /* Text */
@@ -111,6 +143,13 @@ html:not(.dark) .hsb-main .text-zinc-700 { color: rgba(21, 21, 26, 0.18) !import
 /* Links */
 html:not(.dark) .hsb-main .text-blue-400 { color: #6366f1 !important; }
 html:not(.dark) .hsb-main .hover\:text-blue-300:hover { color: #818cf8 !important; }
+
+/* Placeholder text */
+html:not(.dark) .hsb-main input::placeholder,
+html:not(.dark) .hsb-main textarea::placeholder,
+html:not(.dark) .hsb-main select::placeholder {
+  color: rgba(21, 21, 26, 0.3) !important;
+}
 
 /* ── hsb-main: dark-mode minimalistic border overrides ──────── */
 .dark .hsb-main .border-zinc-800,
