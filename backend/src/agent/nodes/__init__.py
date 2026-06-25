@@ -118,6 +118,7 @@ class ComplianceState:
     agent_run_rkey: str = ""
     pr_assessment_uri: str = ""
     evidence_uris: list[str] = field(default_factory=list)
+    downstream_issues_created: list[dict] = field(default_factory=list)
 
     # Metadata
     agent_run_started: float = field(default_factory=time.time)
@@ -845,6 +846,64 @@ def write_records(state: ComplianceState) -> ComplianceState:
             )
             client.create_governance_record(impact)
             records_written += 1
+
+        # 6b. Create issues in downstream repos for affected edges
+        if state.affected_edges:
+            from src.agent.tools.tangled import _create_native_record
+
+            all_repos = client.list_records("sh.tangled.repo")["records"]
+            uri_to_rkey: dict[str, str] = {}
+            uri_to_did: dict[str, str] = {}
+            for rr in all_repos:
+                r_uri = rr.get("uri", "")
+                uri_to_rkey[r_uri] = r_uri.rsplit("/", 1)[-1]
+                uri_to_did[r_uri] = _val(rr).get("repoDid", "")
+
+            source_rkey = uri_to_rkey.get(state.repo_uri, state.repo_uri)
+            now = datetime.now(timezone.utc)
+
+            seen_downstream: set[str] = set()
+            for edge in state.affected_edges:
+                ds_repo = edge.get("downstreamRepo", "")
+                if not ds_repo or ds_repo in seen_downstream:
+                    continue
+                seen_downstream.add(ds_repo)
+
+                ds_did = uri_to_did.get(ds_repo, "")
+                ds_rkey = uri_to_rkey.get(ds_repo, ds_repo)
+                if not ds_did:
+                    continue
+
+                title = f"[Upstream: {source_rkey}] PR {state.pr_branch} may affect {edge.get('downstreamPath', ds_rkey)}"
+                body = (
+                    f"**Upstream repo:** `{source_rkey}`\n"
+                    f"**PR branch:** `{state.pr_branch}`\n"
+                    f"**Affected path:** `{edge.get('downstreamPath', '?')}`\n"
+                    f"**Dependency type:** code dependency\n\n"
+                    f"### Reason\n{edge.get('reason', 'Upstream change affects this repo.')}\n\n"
+                    f"### Recommended Action\n"
+                    f"Review whether this repo needs updates to accommodate the upstream change.\n\n"
+                    f"---\n*Created by PR compliance pipeline at {now.strftime('%Y-%m-%d %H:%M UTC')}*"
+                )
+
+                try:
+                    issue_result = _create_native_record(
+                        "sh.tangled.repo.issue",
+                        {
+                            "repo": ds_did,
+                            "title": title[:200],
+                            "body": body,
+                            "createdAt": now.isoformat(),
+                        },
+                    )
+                    state.downstream_issues_created.append({
+                        "uri": issue_result["uri"],
+                        "downstream_repo": ds_rkey,
+                        "title": title,
+                    })
+                    records_written += 1
+                except Exception:  # noqa: BLE001
+                    pass
 
         # 7. MergeGate — final verdict
         gate = MergeGate(

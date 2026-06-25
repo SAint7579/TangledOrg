@@ -434,6 +434,111 @@ async def list_repo_pulls(rkey: str, request: Request):
     return {"pulls": result}
 
 
+@router.get("/repos/{rkey}/pulls/{pull_rkey}/assessment")
+async def get_pr_assessment(rkey: str, pull_rkey: str, request: Request):
+    """Get the compliance assessment for a specific pull request."""
+    get_authenticated_session(request)
+    session = _get_org_session()
+
+    repo_rec = _get_repo_record(rkey)
+    repo_uri = repo_rec["uri"]
+
+    pulls = _list_records(session, "sh.tangled.repo.pull")
+    pr_uri = ""
+    for p in pulls:
+        if p["rkey"] == pull_rkey:
+            pr_uri = p["uri"]
+            break
+
+    if not pr_uri:
+        raise HTTPException(status_code=404, detail="Pull request not found")
+
+    assessments = _list_records(session, "sh.tangled.governance.compliance.prAssessment")
+    assessment = None
+    for a in assessments:
+        v = a["value"]
+        if v.get("pullRequest") == pr_uri:
+            assessment = a
+            break
+
+    if not assessment:
+        return {"assessment": None, "gate": None, "controlEvaluations": [], "impact": None}
+
+    assessment_uri = assessment["uri"]
+    av = assessment["value"]
+
+    gates = _list_records(session, "sh.tangled.governance.compliance.mergeGate")
+    gate = None
+    for g in gates:
+        if g["value"].get("prAssessment") == assessment_uri:
+            gate = g
+            break
+
+    evals = _list_records(session, "sh.tangled.governance.compliance.controlEvaluation")
+    control_evals = []
+    for e in evals:
+        if e["value"].get("prAssessment") == assessment_uri:
+            ctrl_uri = e["value"].get("control", "")
+            ctrl_rkey = ctrl_uri.rsplit("/", 1)[-1] if ctrl_uri else ""
+            control_evals.append({
+                "id": e["rkey"],
+                "control": ctrl_rkey,
+                "status": e["value"].get("status", ""),
+                "reason": e["value"].get("reason", ""),
+            })
+
+    impacts = _list_records(session, "sh.tangled.governance.compliance.impactAssessment")
+    impact = None
+    for i in impacts:
+        if i["value"].get("pullRequest") == pr_uri:
+            impact = i
+            break
+
+    repos = _list_records(session, "sh.tangled.repo")
+    uri_to_name: dict[str, str] = {}
+    for r in repos:
+        uri_to_name[r["uri"]] = r["rkey"]
+
+    impact_data = None
+    if impact:
+        iv = impact["value"]
+        affected = []
+        for edge in iv.get("affectedEdges", []):
+            ds_repo = edge.get("downstreamRepo", "")
+            affected.append({
+                "downstreamRepo": uri_to_name.get(ds_repo, ds_repo),
+                "downstreamPath": edge.get("downstreamPath", ""),
+                "reason": edge.get("reason", ""),
+                "actionRequired": edge.get("actionRequired", ""),
+            })
+        impact_data = {
+            "riskLevel": iv.get("riskLevel", ""),
+            "summary": iv.get("summary", ""),
+            "affectedEdges": affected,
+        }
+
+    return {
+        "assessment": {
+            "id": assessment["rkey"],
+            "uri": assessment_uri,
+            "riskLevel": av.get("riskLevel", ""),
+            "summary": av.get("summary", ""),
+            "changedFiles": av.get("changedFiles", 0),
+            "controlsPassed": av.get("controlsPassed", 0),
+            "controlsFailed": av.get("controlsFailed", 0),
+            "controlsWarning": av.get("controlsWarning", 0),
+            "createdAt": av.get("createdAt", ""),
+        },
+        "gate": {
+            "status": gate["value"].get("status", "") if gate else "",
+            "reason": gate["value"].get("reason", "") if gate else "",
+            "blockedControls": gate["value"].get("blockedControls", []) if gate else [],
+        } if gate else None,
+        "controlEvaluations": control_evals,
+        "impact": impact_data,
+    }
+
+
 @router.get("/repos/{rkey}/tree")
 async def get_repo_tree(rkey: str, request: Request, ref: str = "main", path: str = ""):
     get_authenticated_session(request)  # auth check
@@ -780,6 +885,7 @@ async def run_agent(body: AgentRunRequest, request: Request):
         "records_written": r.get("records_written", 0),
         "agent_run_uri": r.get("agent_run_uri", ""),
         "pr_assessment_uri": r.get("pr_assessment_uri", ""),
+        "downstream_issues": r.get("downstream_issues_created", []),
         "error": r.get("error"),
     }
 
@@ -832,6 +938,8 @@ async def run_scan(body: ScanRequest, request: Request):
         "findings": r.get("findings", []),
         "issues_created": r.get("issues_created", []),
         "incidents_created": r.get("incidents_created", []),
+        "cross_repo_findings": r.get("cross_repo_findings", []),
+        "cross_repo_issues_created": r.get("cross_repo_issues_created", []),
         "duration_ms": int((time.time() - r.get("started", time.time())) * 1000),
         "error": r.get("error"),
     }

@@ -4,7 +4,7 @@ Walks a repository's file tree, reads source files, evaluates them against
 bound policy controls using Claude, and raises issues for violations.
 
 Pipeline:
-  load_context → collect_files → read_files → evaluate_compliance → report_findings
+  load_context → collect_files → read_files → evaluate_compliance → check_cross_repo → report_findings → save_scan_record
 
 Usage:
     from src.agent.nodes.scan import scan_graph, ScanState
@@ -79,6 +79,12 @@ class ScanState:
     controls_warning: int = 0
     claude_tokens_in: int = 0
     claude_tokens_out: int = 0
+
+    # From check_cross_repo
+    repo_dependencies: list[dict] = field(default_factory=list)
+    code_dependencies: list[dict] = field(default_factory=list)
+    cross_repo_findings: list[dict] = field(default_factory=list)
+    cross_repo_issues_created: list[dict] = field(default_factory=list)
 
     # From report_findings
     issues_created: list[dict] = field(default_factory=list)
@@ -399,7 +405,196 @@ def evaluate_compliance(state: ScanState) -> ScanState:
 
 
 # ---------------------------------------------------------------------------
-# Node 5: report_findings
+# Node 5: check_cross_repo
+# ---------------------------------------------------------------------------
+
+_CROSS_REPO_SYSTEM = """You are a dependency analyst. Given a repository's source code, its dependency graph edges, and compliance findings, identify cross-repo discrepancies.
+
+Look for:
+1. API contract violations — this repo exposes an API that downstream consumers depend on, and the code has issues that would break consumers.
+2. Shared model/schema changes — data structures used across repos are inconsistent.
+3. Missing or outdated dependency declarations — the code imports/calls something not declared in the graph.
+4. Security issues that propagate — e.g. a vulnerable dependency used by downstream services.
+
+Respond ONLY with valid JSON. No markdown fences."""
+
+_CROSS_REPO_SCHEMA = {
+    "cross_repo_findings": [
+        {
+            "downstream_repo_uri": "AT-URI of the downstream repo that needs to change",
+            "severity": "critical|high|medium|low",
+            "title": "Short title (max 120 chars)",
+            "description": "What needs to change in the downstream repo and why (max 500 chars)",
+            "source_file": "file in THIS repo that causes the issue",
+            "dependency_type": "api-call|import|shared-model|event-consumer|database-shared|config-ref",
+        }
+    ],
+}
+
+
+def check_cross_repo(state: ScanState) -> ScanState:
+    """Analyze dependency graph for cross-repo discrepancies and create issues in downstream repos."""
+    if state.error and not state.findings:
+        return state
+
+    try:
+        client = get_client()
+        from src.models import RepoDependency, CodeDependency
+
+        repo_deps = client.list_governance_records("graph.repoDependency")
+        code_deps = client.list_governance_records("graph.codeDependency")
+
+        state.repo_dependencies = [
+            r for r in repo_deps.get("records", [])
+            if _val(r).get("sourceRepo") == state.repo_uri
+            or _val(r).get("targetRepo") == state.repo_uri
+        ]
+        state.code_dependencies = [
+            r for r in code_deps.get("records", [])
+            if _val(r).get("sourceRepo") == state.repo_uri
+            or _val(r).get("targetRepo") == state.repo_uri
+        ]
+
+        if not state.repo_dependencies and not state.code_dependencies:
+            return state
+
+        if not _LANGGRAPH_AVAILABLE or not state.file_contents:
+            return state
+
+        api_key = settings.anthropic_api_key
+        if not api_key:
+            return state
+
+        repos = client.list_records("sh.tangled.repo")["records"]
+        uri_to_rkey: dict[str, str] = {}
+        for r in repos:
+            uri_to_rkey[r.get("uri", "")] = r.get("uri", "").rsplit("/", 1)[-1]
+
+        dep_text = "### Repo-level dependencies\n"
+        for d in state.repo_dependencies:
+            v = _val(d)
+            src = uri_to_rkey.get(v.get("sourceRepo", ""), v.get("sourceRepo", ""))
+            tgt = uri_to_rkey.get(v.get("targetRepo", ""), v.get("targetRepo", ""))
+            dep_text += f"- {src} → {tgt} ({v.get('dependencyType', '?')})\n"
+
+        dep_text += "\n### Code-level dependencies\n"
+        for d in state.code_dependencies:
+            v = _val(d)
+            src_repo = uri_to_rkey.get(v.get("sourceRepo", ""), "?")
+            tgt_repo = uri_to_rkey.get(v.get("targetRepo", ""), "?")
+            dep_text += (
+                f"- {src_repo}:{v.get('sourcePath', '?')} → "
+                f"{tgt_repo}:{v.get('targetPath', '?')} "
+                f"({v.get('dependencyType', '?')})\n"
+            )
+
+        findings_text = ""
+        if state.findings:
+            findings_text = "\n### Existing compliance findings in this repo\n"
+            for f in state.findings[:15]:
+                findings_text += f"- [{f.get('severity', '?')}] {f.get('file', '?')}: {f.get('title', '?')}\n"
+
+        files_summary = "\n### Key source files\n"
+        for fpath, content in list(state.file_contents.items())[:10]:
+            preview = content[:1500] + ("\n...(truncated)" if len(content) > 1500 else "")
+            files_summary += f"\n#### {fpath}\n```\n{preview}\n```\n"
+
+        prompt = f"""## Repository: {state.repo_rkey} ({state.repo_uri})
+
+## Dependency Graph
+{dep_text}
+{findings_text}
+{files_summary}
+
+---
+
+Identify cross-repo discrepancies. For each issue, specify the `downstream_repo_uri` (the AT-URI of the repo that needs to change).
+
+Available repo URIs:
+{json.dumps({rkey: uri for uri, rkey in uri_to_rkey.items()}, indent=2)}
+
+Return JSON matching:
+{json.dumps(_CROSS_REPO_SCHEMA, indent=2)}
+
+If there are no cross-repo issues, return {{"cross_repo_findings": []}}"""
+
+        llm = ChatAnthropic(
+            model="claude-sonnet-4-6",
+            api_key=api_key,
+            max_tokens=4096,
+        )
+        response = llm.invoke([
+            SystemMessage(content=_CROSS_REPO_SYSTEM),
+            HumanMessage(content=prompt),
+        ])
+        raw = response.content if hasattr(response, "content") else str(response)
+
+        if hasattr(response, "usage_metadata") and response.usage_metadata:
+            state.claude_tokens_in += response.usage_metadata.get("input_tokens", 0)
+            state.claude_tokens_out += response.usage_metadata.get("output_tokens", 0)
+
+        parsed = json.loads(raw)
+        cross_findings = parsed.get("cross_repo_findings", [])
+
+        if not cross_findings:
+            return state
+
+        state.cross_repo_findings = cross_findings
+
+        from src.agent.tools.tangled import _create_native_record
+
+        rkey_to_did: dict[str, str] = {}
+        for r in repos:
+            rk = r.get("uri", "").rsplit("/", 1)[-1]
+            rkey_to_did[rk] = _val(r).get("repoDid", "")
+
+        now = datetime.now(timezone.utc)
+        for finding in cross_findings[:10]:
+            ds_uri = finding.get("downstream_repo_uri", "")
+            ds_rkey = uri_to_rkey.get(ds_uri, "")
+            ds_did = rkey_to_did.get(ds_rkey, "")
+
+            if not ds_did:
+                continue
+
+            title = f"[Upstream: {state.repo_rkey}] {finding.get('title', 'Dependency discrepancy')}"
+            sev = finding.get("severity", "medium")
+            body = (
+                f"**Severity:** {sev.upper()}\n"
+                f"**Source repo:** `{state.repo_rkey}`\n"
+                f"**Source file:** `{finding.get('source_file', '?')}`\n"
+                f"**Dependency type:** {finding.get('dependency_type', '?')}\n\n"
+                f"### Description\n{finding.get('description', 'No details.')}\n\n"
+                f"---\n*Created by cross-repo dependency analysis at {now.strftime('%Y-%m-%d %H:%M UTC')}*"
+            )
+
+            issue_result = _create_native_record(
+                "sh.tangled.repo.issue",
+                {
+                    "repo": ds_did,
+                    "title": title[:200],
+                    "body": body,
+                    "createdAt": now.isoformat(),
+                },
+            )
+            state.cross_repo_issues_created.append({
+                "uri": issue_result["uri"],
+                "downstream_repo": ds_rkey,
+                "title": title,
+                "severity": sev,
+            })
+
+    except json.JSONDecodeError:
+        pass
+    except Exception as exc:  # noqa: BLE001
+        if not state.error:
+            state.error = f"check_cross_repo: {exc}"
+
+    return state
+
+
+# ---------------------------------------------------------------------------
+# Node 6: report_findings
 # ---------------------------------------------------------------------------
 
 
@@ -537,6 +732,7 @@ if _LANGGRAPH_AVAILABLE:
     _builder.add_node("collect_files", collect_files)
     _builder.add_node("read_files", read_files)
     _builder.add_node("evaluate_compliance", evaluate_compliance)
+    _builder.add_node("check_cross_repo", check_cross_repo)
     _builder.add_node("report_findings", report_findings)
     _builder.add_node("save_scan_record", save_scan_record)
 
@@ -544,7 +740,8 @@ if _LANGGRAPH_AVAILABLE:
     _builder.add_edge("load_context", "collect_files")
     _builder.add_edge("collect_files", "read_files")
     _builder.add_edge("read_files", "evaluate_compliance")
-    _builder.add_edge("evaluate_compliance", "report_findings")
+    _builder.add_edge("evaluate_compliance", "check_cross_repo")
+    _builder.add_edge("check_cross_repo", "report_findings")
     _builder.add_edge("report_findings", "save_scan_record")
     _builder.add_edge("save_scan_record", END)
 

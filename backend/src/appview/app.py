@@ -1,5 +1,8 @@
 """FastAPI application for Tangled Org AppView."""
 
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -8,10 +11,22 @@ from src.appview.client_metadata import get_client_metadata
 from src.appview.routes import auth, api
 from src.config import settings
 
+logger = logging.getLogger("appview")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    from src.appview.pr_watcher import start_pr_watcher, stop_pr_watcher
+    start_pr_watcher()
+    yield
+    stop_pr_watcher()
+
+
 app = FastAPI(
     title="Tangled Org",
     description="Governance & compliance layer for Tangled",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 allowed_origins = [

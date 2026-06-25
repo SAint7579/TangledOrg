@@ -121,6 +121,57 @@ export async function fetchRepoPulls(rkey: string) {
   }>(`/api/repos/${rkey}/pulls`);
 }
 
+// ── PR Assessment ────────────────────────────────────────────────────────────
+
+export interface PRAssessmentData {
+  id: string;
+  uri: string;
+  riskLevel: string;
+  summary: string;
+  changedFiles: number;
+  controlsPassed: number;
+  controlsFailed: number;
+  controlsWarning: number;
+  createdAt: string;
+}
+
+export interface PRGateData {
+  status: string;
+  reason: string;
+  blockedControls: string[];
+}
+
+export interface PRControlEval {
+  id: string;
+  control: string;
+  status: string;
+  reason: string;
+}
+
+export interface PRAffectedEdge {
+  downstreamRepo: string;
+  downstreamPath: string;
+  reason: string;
+  actionRequired: string;
+}
+
+export interface PRImpactData {
+  riskLevel: string;
+  summary: string;
+  affectedEdges: PRAffectedEdge[];
+}
+
+export interface PRAssessmentResponse {
+  assessment: PRAssessmentData | null;
+  gate: PRGateData | null;
+  controlEvaluations: PRControlEval[];
+  impact: PRImpactData | null;
+}
+
+export async function fetchPRAssessment(repoRkey: string, pullRkey: string) {
+  return apiFetch<PRAssessmentResponse>(`/api/repos/${repoRkey}/pulls/${pullRkey}/assessment`);
+}
+
 export async function fetchRepoTree(rkey: string, ref = "main", path = "") {
   const params = new URLSearchParams({ ref });
   if (path) params.set("path", path);

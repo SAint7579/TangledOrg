@@ -14,8 +14,9 @@ import { RiskBadge } from "@/components/compliance/RiskBadge";
 import {
   fetchRepos, fetchRepoProfile, fetchPolicies, fetchIncidents,
   fetchRepoIssues, fetchRepoPulls, fetchRepoTree, runScan, fetchRepoScans,
+  fetchPRAssessment,
 } from "@/lib/api";
-import type { ScanResult, ScanHistoryItem } from "@/lib/api";
+import type { ScanResult, ScanHistoryItem, PRAssessmentResponse } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 type Tab = "code" | "issues" | "pulls" | "compliance" | "policies" | "scan";
@@ -52,6 +53,9 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
   const [treePath, setTreePath] = useState("");
   const [treeLoading, setTreeLoading] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [expandedPRId, setExpandedPRId] = useState<string | null>(null);
+  const [prAssessments, setPrAssessments] = useState<Record<string, PRAssessmentResponse>>({});
+  const [prAssessmentLoading, setPrAssessmentLoading] = useState<string | null>(null);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [scanRunning, setScanRunning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -94,6 +98,22 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
       loadTree("");
     }
   }, [loading, activeTab, treeEntries.length, loadTree]);
+
+  const handleExpandPR = useCallback(async (prId: string) => {
+    if (expandedPRId === prId) {
+      setExpandedPRId(null);
+      return;
+    }
+    setExpandedPRId(prId);
+    if (!prAssessments[prId]) {
+      setPrAssessmentLoading(prId);
+      const data = await fetchPRAssessment(params.repo, prId);
+      if (data) {
+        setPrAssessments((prev) => ({ ...prev, [prId]: data }));
+      }
+      setPrAssessmentLoading(null);
+    }
+  }, [expandedPRId, prAssessments, params.repo]);
 
   const loadScanHistory = useCallback(() => {
     fetchRepoScans(params.repo).then((data) => {
@@ -347,40 +367,182 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
                       : pr.status === "open"
                         ? "success"
                         : "neutral";
+                    const isExpanded = expandedPRId === pr.id;
+                    const assessment = prAssessments[pr.id];
+                    const isLoadingAssessment = prAssessmentLoading === pr.id;
+
                     return (
-                      <Card key={pr.id} className="hover:border-zinc-700 transition-colors">
-                        <div className="flex items-start gap-3">
-                          <GitPullRequest
-                            size={16}
-                            className={cn(
-                              "mt-0.5 flex-shrink-0",
-                              pr.status === "merged" ? "text-purple-400"
-                                : pr.status === "open" ? "text-green-400"
-                                : "text-zinc-600"
+                      <div key={pr.id} className="border border-zinc-800 rounded overflow-hidden">
+                        <button
+                          onClick={() => handleExpandPR(pr.id)}
+                          className="w-full text-left px-4 py-3 hover:bg-zinc-800/30 transition-colors"
+                        >
+                          <div className="flex items-start gap-3">
+                            {isExpanded ? (
+                              <ChevronDown size={14} className="mt-0.5 text-zinc-500 flex-shrink-0" />
+                            ) : (
+                              <ChevronRight size={14} className="mt-0.5 text-zinc-500 flex-shrink-0" />
                             )}
-                          />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-sm font-medium text-zinc-200">{pr.title}</span>
-                              <Badge variant={statusVariant} size="sm">
-                                {pr.status}
-                              </Badge>
+                            <GitPullRequest
+                              size={16}
+                              className={cn(
+                                "mt-0.5 flex-shrink-0",
+                                pr.status === "merged" ? "text-purple-400"
+                                  : pr.status === "open" ? "text-green-400"
+                                  : "text-zinc-600"
+                              )}
+                            />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-sm font-medium text-zinc-200">{pr.title}</span>
+                                <Badge variant={statusVariant} size="sm">
+                                  {pr.status}
+                                </Badge>
+                                {assessment?.gate && (
+                                  <span className={cn(
+                                    "text-[9px] px-1.5 py-0.5 rounded font-mono font-semibold uppercase",
+                                    assessment.gate.status === "pass" ? "bg-green-500/10 text-green-400" :
+                                    assessment.gate.status === "warning" ? "bg-yellow-500/10 text-yellow-400" :
+                                    assessment.gate.status === "blocked" ? "bg-red-500/10 text-red-400" :
+                                    "bg-orange-500/10 text-orange-400"
+                                  )}>
+                                    {assessment.gate.status}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-zinc-500 mt-1">
+                                {pr.sourceBranch && pr.targetBranch && (
+                                  <span className="font-mono">
+                                    {pr.sourceBranch}
+                                    <span className="text-zinc-600 mx-1">&rarr;</span>
+                                    {pr.targetBranch}
+                                  </span>
+                                )}
+                                {pr.createdAt && (
+                                  <span className="ml-2">{formatDate(pr.createdAt)}</span>
+                                )}
+                              </p>
                             </div>
-                            <p className="text-xs text-zinc-500 mt-1">
-                              {pr.sourceBranch && pr.targetBranch && (
-                                <span className="font-mono">
-                                  {pr.sourceBranch}
-                                  <span className="text-zinc-600 mx-1">&rarr;</span>
-                                  {pr.targetBranch}
-                                </span>
-                              )}
-                              {pr.createdAt && (
-                                <span className="ml-2">{formatDate(pr.createdAt)}</span>
-                              )}
-                            </p>
                           </div>
-                        </div>
-                      </Card>
+                        </button>
+
+                        {isExpanded && (
+                          <div className="border-t border-zinc-800 bg-zinc-900/50 px-4 py-4">
+                            {isLoadingAssessment && (
+                              <div className="flex items-center gap-2 text-zinc-500 text-xs">
+                                <Loader2 size={12} className="animate-spin" />
+                                Loading assessment...
+                              </div>
+                            )}
+
+                            {!isLoadingAssessment && (!assessment || !assessment.assessment) && (
+                              <p className="text-xs text-zinc-600">No compliance assessment found for this PR.</p>
+                            )}
+
+                            {!isLoadingAssessment && assessment?.assessment && (
+                              <div className="space-y-4">
+                                {/* Risk + Summary */}
+                                <div className="flex items-start gap-3">
+                                  <RiskBadge tier={assessment.assessment.riskLevel as any} size="sm" />
+                                  <p className="text-sm text-zinc-300 flex-1">{assessment.assessment.summary}</p>
+                                </div>
+
+                                {/* Gate verdict */}
+                                {assessment.gate && (
+                                  <div className={cn(
+                                    "px-3 py-2 rounded border text-xs",
+                                    assessment.gate.status === "pass" ? "bg-green-950/30 border-green-900/30 text-green-300" :
+                                    assessment.gate.status === "warning" ? "bg-yellow-950/30 border-yellow-900/30 text-yellow-300" :
+                                    assessment.gate.status === "blocked" ? "bg-red-950/30 border-red-900/30 text-red-300" :
+                                    "bg-orange-950/30 border-orange-900/30 text-orange-300"
+                                  )}>
+                                    <span className="font-semibold uppercase">{assessment.gate.status}</span>
+                                    {assessment.gate.reason && (
+                                      <span className="ml-2 opacity-80">— {assessment.gate.reason}</span>
+                                    )}
+                                  </div>
+                                )}
+
+                                {/* Control stats */}
+                                <div className="grid grid-cols-3 gap-3">
+                                  <div className="flex items-center gap-2 p-2 bg-green-950/30 border border-green-900/30 rounded">
+                                    <CheckCircle2 size={13} className="text-green-400" />
+                                    <div>
+                                      <p className="text-sm font-bold text-green-400">{assessment.assessment.controlsPassed}</p>
+                                      <p className="text-[9px] text-zinc-500">Passed</p>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2 p-2 bg-yellow-950/30 border border-yellow-900/30 rounded">
+                                    <AlertTriangle size={13} className="text-yellow-400" />
+                                    <div>
+                                      <p className="text-sm font-bold text-yellow-400">{assessment.assessment.controlsWarning}</p>
+                                      <p className="text-[9px] text-zinc-500">Warnings</p>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2 p-2 bg-red-950/30 border border-red-900/30 rounded">
+                                    <XCircle size={13} className="text-red-400" />
+                                    <div>
+                                      <p className="text-sm font-bold text-red-400">{assessment.assessment.controlsFailed}</p>
+                                      <p className="text-[9px] text-zinc-500">Failed</p>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Control evaluations */}
+                                {assessment.controlEvaluations.length > 0 && (
+                                  <div className="space-y-1">
+                                    <h4 className="text-xs text-zinc-500">Control Evaluations</h4>
+                                    <div className="divide-y divide-zinc-800/60">
+                                      {assessment.controlEvaluations.map((ev) => (
+                                        <div key={ev.id} className="flex items-start gap-2 py-1.5">
+                                          {ev.status === "pass" ? (
+                                            <CheckCircle2 size={11} className="text-green-400 mt-0.5 flex-shrink-0" />
+                                          ) : ev.status === "fail" ? (
+                                            <XCircle size={11} className="text-red-400 mt-0.5 flex-shrink-0" />
+                                          ) : (
+                                            <AlertTriangle size={11} className="text-yellow-400 mt-0.5 flex-shrink-0" />
+                                          )}
+                                          <div className="flex-1 min-w-0">
+                                            <span className="text-[10px] font-mono text-zinc-400">{ev.control}</span>
+                                            <p className="text-[10px] text-zinc-500 mt-0.5">{ev.reason}</p>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Downstream impact */}
+                                {assessment.impact && assessment.impact.affectedEdges.length > 0 && (
+                                  <div className="space-y-1">
+                                    <h4 className="text-xs text-zinc-500">
+                                      Downstream Impact ({assessment.impact.affectedEdges.length} repo{assessment.impact.affectedEdges.length > 1 ? "s" : ""})
+                                    </h4>
+                                    <div className="divide-y divide-zinc-800/60">
+                                      {assessment.impact.affectedEdges.map((edge, i) => (
+                                        <div key={i} className="py-1.5">
+                                          <div className="flex items-center gap-2">
+                                            <AlertTriangle size={10} className="text-orange-400" />
+                                            <span className="text-xs font-mono text-orange-300">{edge.downstreamRepo}</span>
+                                            {edge.downstreamPath && (
+                                              <span className="text-[10px] text-zinc-500 font-mono">:{edge.downstreamPath}</span>
+                                            )}
+                                          </div>
+                                          <p className="text-[10px] text-zinc-600 mt-0.5 pl-5">{edge.reason}</p>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                <p className="text-[10px] text-zinc-700">
+                                  {assessment.assessment.changedFiles} files changed &middot; assessed {assessment.assessment.createdAt ? new Date(assessment.assessment.createdAt).toLocaleString() : ""}
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     );
                   })
                 )}
