@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
+import {
+  ChevronDown, ChevronRight, AlertCircle, FileText, ExternalLink,
+} from "lucide-react";
 import { Shell } from "@/components/layout/Shell";
 import { fetchIncidents, createIncident } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -17,10 +21,21 @@ function severityColor(s: string) {
     : "text-green-400";
 }
 
-export default function IssuesPage() {
+function severityBg(s: string) {
+  return s === "critical"
+    ? "bg-red-950/40 border-red-900/40"
+    : s === "high"
+    ? "bg-orange-950/40 border-orange-900/40"
+    : s === "medium"
+    ? "bg-yellow-950/40 border-yellow-900/40"
+    : "bg-green-950/40 border-green-900/40";
+}
+
+export default function IncidentsPage() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<FilterTab>("all");
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState({
     title: "",
@@ -40,7 +55,7 @@ export default function IssuesPage() {
 
   if (loading) {
     return (
-      <Shell breadcrumbs={[{ label: "Issues" }]}>
+      <Shell breadcrumbs={[{ label: "Incidents" }]}>
         <div className="flex items-center justify-center h-64">
           <span className="text-zinc-500 text-sm animate-pulse">Loading...</span>
         </div>
@@ -88,15 +103,15 @@ export default function IssuesPage() {
   }
 
   return (
-    <Shell breadcrumbs={[{ label: "Issues" }]}>
+    <Shell breadcrumbs={[{ label: "Incidents" }]}>
       <div className="max-w-5xl mx-auto space-y-6">
         <div className="flex items-start justify-between">
           <div>
             <h1 className="text-lg font-semibold text-zinc-100 tracking-tight">
-              Issues
+              Incidents
             </h1>
             <p className="text-sm text-zinc-500 mt-1">
-              Incidents tracked across repositories
+              Compliance incidents tracked across repositories
             </p>
           </div>
           <div className="flex items-center gap-6">
@@ -122,7 +137,7 @@ export default function IssuesPage() {
               onClick={() => setShowForm(true)}
               className="text-xs font-mono px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors"
             >
-              Create Issue
+              Create Incident
             </button>
           </div>
         </div>
@@ -222,102 +237,164 @@ export default function IssuesPage() {
         {filtered.length === 0 ? (
           <div className="border border-zinc-800 px-6 py-12 text-center">
             <p className="text-sm text-zinc-500">
-              No issues match this filter.
+              No incidents match this filter.
             </p>
           </div>
         ) : (
-          <div className="border border-zinc-800">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-zinc-800 bg-zinc-900/60">
-                  {[
-                    "Severity",
-                    "Category",
-                    "Description",
-                    "Status",
-                    "SLA Deadline",
-                    "SLA Status",
-                  ].map((h) => (
-                    <th
-                      key={h}
-                      className="text-left px-4 py-2 text-[10px] font-semibold text-zinc-600 uppercase tracking-[0.12em]"
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-800/60">
-                {filtered.map((incident: any, idx: number) => (
-                  <tr
-                    key={incident.id ?? idx}
-                    className="hover:bg-zinc-800/30 transition-colors"
+          <div className="space-y-2">
+            {filtered.map((incident: any, idx: number) => {
+              const id = incident.id ?? idx;
+              const isExpanded = expandedId === id;
+              const issue = incident.linkedIssue;
+
+              return (
+                <div key={id} className="border border-zinc-800 rounded overflow-hidden">
+                  {/* Incident row */}
+                  <button
+                    onClick={() => setExpandedId(isExpanded ? null : id)}
+                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-zinc-800/30 transition-colors text-left"
                   >
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <span
-                        className={cn(
-                          "font-mono text-[11px] font-semibold uppercase",
-                          severityColor(incident.severity)
+                    {isExpanded ? (
+                      <ChevronDown size={14} className="text-zinc-500 flex-shrink-0" />
+                    ) : (
+                      <ChevronRight size={14} className="text-zinc-500 flex-shrink-0" />
+                    )}
+
+                    <span
+                      className={cn(
+                        "px-1.5 py-0.5 text-[10px] font-bold uppercase rounded border flex-shrink-0",
+                        severityColor(incident.severity),
+                        severityBg(incident.severity),
+                      )}
+                    >
+                      {incident.severity}
+                    </span>
+
+                    <span className="font-mono text-[11px] text-zinc-500 capitalize flex-shrink-0">
+                      {(incident.category ?? "").replace(/-/g, " ")}
+                    </span>
+
+                    <span className="text-xs text-zinc-200 truncate flex-1">
+                      {issue?.title || incident.description || "Untitled incident"}
+                    </span>
+
+                    {incident.repoName && (
+                      <span className="text-[10px] font-mono text-zinc-600 flex-shrink-0">
+                        {incident.repoName}
+                      </span>
+                    )}
+
+                    <span
+                      className={cn(
+                        "font-mono text-[11px] font-medium flex-shrink-0",
+                        incident.status === "open"
+                          ? "text-red-400"
+                          : incident.status === "in-progress"
+                          ? "text-amber-400"
+                          : incident.status === "resolved"
+                          ? "text-green-400"
+                          : "text-zinc-600"
+                      )}
+                    >
+                      {incident.status === "in-progress" ? "in progress" : incident.status}
+                    </span>
+                  </button>
+
+                  {/* Expanded detail */}
+                  {isExpanded && (
+                    <div className="border-t border-zinc-800 bg-zinc-900/50 px-4 py-4 space-y-4">
+                      {/* Linked issue */}
+                      {issue ? (
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2">
+                            <AlertCircle size={13} className="text-blue-400" />
+                            <span className="text-xs font-medium text-zinc-300">Linked Issue</span>
+                          </div>
+                          <div className="ml-5 p-3 bg-zinc-800/50 border border-zinc-700/50 rounded space-y-2">
+                            <p className="text-sm font-medium text-zinc-200">{issue.title}</p>
+                            {issue.body && (
+                              <div className="text-xs text-zinc-400 whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto">
+                                {issue.body}
+                              </div>
+                            )}
+                            {issue.createdAt && (
+                              <p className="text-[10px] text-zinc-600">
+                                Created {new Date(issue.createdAt).toLocaleString()}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-zinc-600 italic">No linked issue found.</p>
+                      )}
+
+                      {/* Incident details */}
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                        <div>
+                          <p className="text-zinc-600 mb-0.5">Severity</p>
+                          <p className={cn("font-mono font-semibold uppercase", severityColor(incident.severity))}>
+                            {incident.severity}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-zinc-600 mb-0.5">Category</p>
+                          <p className="text-zinc-300 capitalize">{(incident.category ?? "").replace(/-/g, " ")}</p>
+                        </div>
+                        <div>
+                          <p className="text-zinc-600 mb-0.5">Status</p>
+                          <p className="text-zinc-300">{incident.status}</p>
+                        </div>
+                        {incident.repoName && (
+                          <div>
+                            <p className="text-zinc-600 mb-0.5">Repository</p>
+                            <Link
+                              href={`/repos/${incident.repoName}`}
+                              className="text-blue-400 hover:text-blue-300 font-mono flex items-center gap-1"
+                            >
+                              {incident.repoName} <ExternalLink size={10} />
+                            </Link>
+                          </div>
                         )}
-                      >
-                        {incident.severity}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <span className="font-mono text-[11px] text-zinc-500 capitalize">
-                        {(incident.category ?? "").replace(/-/g, " ")}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 max-w-xs">
-                      <p className="text-xs text-zinc-200 leading-snug line-clamp-2">
-                        {incident.description ?? incident.title}
-                      </p>
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <span
-                        className={cn(
-                          "font-mono text-[11px] font-medium",
-                          incident.status === "open"
-                            ? "text-red-400"
-                            : incident.status === "in-progress"
-                            ? "text-amber-400"
-                            : incident.status === "resolved"
-                            ? "text-green-400"
-                            : "text-zinc-600"
-                        )}
-                      >
-                        {incident.status === "in-progress"
-                          ? "in progress"
-                          : incident.status}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <span className="font-mono text-[11px] text-zinc-500">
-                        {incident.sla?.deadline
-                          ? new Date(
-                              incident.sla.deadline
-                            ).toLocaleDateString()
-                          : "—"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <span
-                        className={cn(
-                          "font-mono text-[11px]",
-                          incident.sla?.status === "breached"
-                            ? "text-red-400"
-                            : incident.sla?.status === "at-risk"
-                            ? "text-amber-400"
-                            : "text-zinc-500"
-                        )}
-                      >
-                        {incident.sla?.status ?? "—"}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                      </div>
+
+                      {incident.description && (
+                        <div>
+                          <p className="text-[10px] text-zinc-600 mb-1">Incident Description</p>
+                          <p className="text-xs text-zinc-400 leading-relaxed">{incident.description}</p>
+                        </div>
+                      )}
+
+                      {/* SLA info */}
+                      {incident.sla && (
+                        <div className="flex items-center gap-4 p-2.5 bg-zinc-800/30 border border-zinc-800 rounded text-xs">
+                          <FileText size={13} className="text-zinc-500" />
+                          <div>
+                            <span className="text-zinc-500">SLA Deadline: </span>
+                            <span className="text-zinc-300 font-mono">
+                              {incident.sla.deadline
+                                ? new Date(incident.sla.deadline).toLocaleString()
+                                : "—"}
+                            </span>
+                          </div>
+                          <span
+                            className={cn(
+                              "font-mono font-medium",
+                              incident.sla.status === "breached"
+                                ? "text-red-400"
+                                : incident.sla.status === "at-risk"
+                                ? "text-amber-400"
+                                : "text-zinc-500"
+                            )}
+                          >
+                            {incident.sla.status ?? "—"}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

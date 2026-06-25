@@ -29,7 +29,7 @@ const NAV_GROUPS = [
   {
     label: "Monitor",
     items: [
-      { href: "/issues", label: "Issues",  icon: AlertCircle, color: "#fca5a5" },
+      { href: "/issues", label: "Incidents",  icon: AlertCircle, color: "#fca5a5" },
       { href: "/repos",  label: "Repos",   icon: FolderGit2,  color: "#86efac" },
     ],
   },

@@ -640,6 +640,23 @@ async def list_incidents(request: Request):
     incidents = _list_records(session, "sh.tangled.governance.compliance.incident")
     sla_trackers = _list_records(session, "sh.tangled.governance.compliance.slaTracker")
 
+    # Resolve linked issues
+    issues = _list_records(session, "sh.tangled.repo.issue")
+    issue_map: dict[str, dict] = {}
+    for iss in issues:
+        issue_map[iss["uri"]] = {
+            "uri": iss["uri"],
+            "title": iss["value"].get("title", ""),
+            "body": iss["value"].get("body", ""),
+            "createdAt": iss["value"].get("createdAt", ""),
+        }
+
+    # Resolve repo names
+    repos = _list_records(session, "sh.tangled.repo")
+    repo_uri_to_name: dict[str, str] = {}
+    for r in repos:
+        repo_uri_to_name[r["uri"]] = r["rkey"]
+
     sla_map = {}
     for s in sla_trackers:
         sla_map[s["value"].get("incident", "")] = s["value"]
@@ -647,9 +664,13 @@ async def list_incidents(request: Request):
     result = []
     for inc in incidents:
         val = inc["value"]
+        issue_uri = val.get("issue", "")
+        repo_uri = val.get("repo", "")
         result.append({
             "id": inc["rkey"], "uri": inc["uri"], **val,
             "sla": sla_map.get(inc["uri"]),
+            "linkedIssue": issue_map.get(issue_uri),
+            "repoName": repo_uri_to_name.get(repo_uri, ""),
         })
     return {"incidents": result}
 
