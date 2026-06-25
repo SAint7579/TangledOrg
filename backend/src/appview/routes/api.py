@@ -693,7 +693,7 @@ async def close_pull_request(rkey: str, pull_rkey: str, request: Request):
 
 @router.post("/repos/{rkey}/pulls/{pull_rkey}/merge")
 async def merge_pull_request(rkey: str, pull_rkey: str, request: Request):
-    """Merge a PR: merge on knot, write merged status, materialise incidents."""
+    """Merge a PR: merge on knot, write merged status, trigger normal repo scan."""
     get_authenticated_session(request)
     session = _get_org_session()
 
@@ -799,25 +799,36 @@ async def merge_pull_request(rkey: str, pull_rkey: str, request: Request):
     if resp.status_code not in (200, 201):
         raise HTTPException(status_code=resp.status_code, detail=resp.text)
 
-    # ── Step 3: Materialise incidents/issues from assessment ──────────
-    materialized = 0
+    # ── Step 3: Trigger normal repo scan on the merged branch ────────
+    scan_result = None
     try:
-        from src.appview.pr_watcher import _materialize_on_merge
-        materialized = await loop.run_in_executor(
-            None, _materialize_on_merge, pr_uri, session
-        )
+        from src.agent.nodes.scan import ScanState, scan_graph
+
+        if scan_graph is not None:
+            initial = ScanState(repo_rkey=rkey)
+            raw = await loop.run_in_executor(None, scan_graph.invoke, initial)
+            r = raw if isinstance(raw, dict) else vars(raw)
+            scan_result = {
+                "risk_level": r.get("risk_level", "low"),
+                "summary": r.get("summary", ""),
+                "findings": len(r.get("findings", [])),
+                "issues_created": len(r.get("issues_created", [])),
+                "incidents_created": len(r.get("incidents_created", [])),
+                "cross_repo_issues": len(r.get("cross_repo_issues_created", [])),
+            }
     except ImportError:
         pass
     except Exception as exc:
         import logging
-        logging.getLogger("api").exception("Materialisation failed for PR %s: %s", pull_rkey, exc)
+        logging.getLogger("api").exception("Post-merge scan failed for %s: %s", rkey, exc)
+        scan_result = {"error": str(exc)[:200]}
 
     return {
         "status": "merged",
         "pullRkey": pull_rkey,
         "knotMerged": knot_merged,
         "knotError": knot_error,
-        "materializedRecords": materialized,
+        "scan": scan_result,
     }
 
 

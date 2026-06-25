@@ -368,13 +368,8 @@ async def _poll_once() -> int:
                     processed += 1
 
         elif current_label == "merged" and previous_label in (None, "open"):
-            # PR merged → materialise potential incidents into real ones
-            logger.info("PR merged: %s (%s)", uri, pr["value"].get("title", ""))
-            loop = asyncio.get_event_loop()
-            count = await loop.run_in_executor(
-                None, _materialize_on_merge, uri, session
-            )
-            processed += 1
+            # PR merged → just log it; the merge endpoint triggers the scan
+            logger.info("PR merged (detected by watcher): %s (%s)", uri, pr["value"].get("title", ""))
 
         _pr_status_cache[uri] = current_label
 

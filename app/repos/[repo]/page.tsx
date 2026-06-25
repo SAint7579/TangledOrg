@@ -64,8 +64,9 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
   const [createPRResult, setCreatePRResult] = useState<any>(null);
   const [prActionLoading, setPrActionLoading] = useState<string | null>(null);
   const [mergeResult, setMergeResult] = useState<{
-    pullRkey: string; materializedRecords: number;
+    pullRkey: string;
     knotMerged: boolean; knotError: string | null;
+    scan: { risk_level: string; summary: string; findings: number; issues_created: number; incidents_created: number; cross_repo_issues: number; error?: string } | null;
   } | null>(null);
   const [expandedPRId, setExpandedPRId] = useState<string | null>(null);
   const [prAssessments, setPrAssessments] = useState<Record<string, PRAssessmentResponse>>({});
@@ -159,7 +160,7 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
   }, [params.repo]);
 
   const handleMergePR = useCallback(async (prId: string) => {
-    if (!confirm("Merge this PR? Potential incidents will be materialized into real issues.")) return;
+    if (!confirm("Merge this PR? Code will be merged and a compliance scan will run on the updated branch.")) return;
     setPrActionLoading(prId);
     setMergeResult(null);
     try {
@@ -167,9 +168,9 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
       if (result) {
         setMergeResult({
           pullRkey: prId,
-          materializedRecords: result.materializedRecords,
           knotMerged: result.knotMerged,
           knotError: result.knotError,
+          scan: result.scan ?? null,
         });
       }
       fetchRepoPulls(params.repo).then((data) => setPulls(data?.pulls || []));
@@ -895,9 +896,37 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
                                     Knot merge: {mergeResult.knotError}
                                   </p>
                                 ) : null}
-                                {(mergeResult?.materializedRecords ?? 0) > 0 && (
-                                  <p className="text-[10px] text-zinc-400 pl-5">
-                                    {mergeResult?.materializedRecords} records created (issues + incidents in affected repos)
+                                {mergeResult?.scan && !mergeResult.scan.error && (
+                                  <div className="text-[10px] text-zinc-400 pl-5 space-y-0.5">
+                                    <p className="flex items-center gap-1.5">
+                                      <CheckCircle2 size={10} className="text-blue-400" />
+                                      Post-merge scan complete — risk: <span className={
+                                        mergeResult.scan.risk_level === "high" ? "text-red-400" :
+                                        mergeResult.scan.risk_level === "medium" ? "text-amber-400" : "text-green-400"
+                                      }>{mergeResult.scan.risk_level}</span>
+                                    </p>
+                                    {mergeResult.scan.issues_created > 0 && (
+                                      <p>{mergeResult.scan.issues_created} issue(s) created</p>
+                                    )}
+                                    {mergeResult.scan.incidents_created > 0 && (
+                                      <p>{mergeResult.scan.incidents_created} incident(s) created</p>
+                                    )}
+                                    {mergeResult.scan.cross_repo_issues > 0 && (
+                                      <p>{mergeResult.scan.cross_repo_issues} cross-repo issue(s) created</p>
+                                    )}
+                                    {mergeResult.scan.findings > 0 && (
+                                      <p>{mergeResult.scan.findings} finding(s) total</p>
+                                    )}
+                                  </div>
+                                )}
+                                {mergeResult?.scan?.error && (
+                                  <p className="text-[10px] text-amber-400/80 pl-5">
+                                    Scan error: {mergeResult.scan.error}
+                                  </p>
+                                )}
+                                {!mergeResult?.scan && (
+                                  <p className="text-[10px] text-zinc-500 pl-5">
+                                    Agent not available — scan skipped
                                   </p>
                                 )}
                               </div>

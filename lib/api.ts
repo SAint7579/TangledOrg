@@ -184,7 +184,15 @@ export async function mergePullRequest(repoRkey: string, pullRkey: string) {
     pullRkey: string;
     knotMerged: boolean;
     knotError: string | null;
-    materializedRecords: number;
+    scan: {
+      risk_level: string;
+      summary: string;
+      findings: number;
+      issues_created: number;
+      incidents_created: number;
+      cross_repo_issues: number;
+      error?: string;
+    } | null;
   }>(
     `/api/repos/${repoRkey}/pulls/${pullRkey}/merge`, {}
   );
