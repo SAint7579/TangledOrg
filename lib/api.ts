@@ -229,6 +229,29 @@ export async function createPullRequest(rkey: string, body: {
   }>(`/api/repos/${rkey}/pulls`, body);
 }
 
+// ── Dashboard ────────────────────────────────────────────────────────────────
+
+export interface DashboardData {
+  repoCount: number;
+  repoStats: {
+    rkey: string; name: string; knot: string;
+    openPulls: number; totalPulls: number;
+    scanCount: number; incidentCount: number;
+  }[];
+  incidents: {
+    total: number; open: number; resolved: number;
+    severity: { critical: number; high: number; medium: number; low: number };
+  };
+  policies: { count: number; totalControls: number; totalBindings: number };
+  pulls: { totalOpen: number };
+  scans: { total: number; reposScanned: number };
+  graph: { repoDeps: number; codeDeps: number };
+}
+
+export async function fetchDashboard() {
+  return apiFetch<DashboardData>("/api/dashboard");
+}
+
 export async function fetchRepoTree(rkey: string, ref = "main", path = "") {
   const params = new URLSearchParams({ ref });
   if (path) params.set("path", path);

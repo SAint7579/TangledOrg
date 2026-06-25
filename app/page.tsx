@@ -3,18 +3,16 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
-  Shield, AlertCircle, CheckCircle2, XCircle, AlertTriangle, Clock,
-  GitPullRequest, GitBranch, FolderGit2, FileText, Network,
-  ArrowRight, TrendingUp, Activity, Eye,
+  Shield, AlertCircle, CheckCircle2, XCircle, AlertTriangle,
+  GitPullRequest, FolderGit2, FileText, Network,
+  ArrowRight, Activity, Eye, GitMerge,
 } from "lucide-react";
 import { Shell } from "@/components/layout/Shell";
 import { Badge } from "@/components/ui/Badge";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { cn } from "@/lib/utils";
-import {
-  fetchOrgs, fetchRepos, fetchIncidents, fetchPolicies,
-  fetchAudit, fetchGraph, fetchRepoPulls, fetchRepoScans,
-} from "@/lib/api";
+import { fetchOrgs, fetchDashboard, fetchIncidents } from "@/lib/api";
+import type { DashboardData } from "@/lib/api";
 
 function StatCard({
   value, label, sublabel, color, icon: Icon, href,
@@ -79,64 +77,22 @@ function SeverityDot({ severity }: { severity: string }) {
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [org, setOrg] = useState<any>(null);
-  const [repos, setRepos] = useState<any[]>([]);
+  const [dash, setDash] = useState<DashboardData | null>(null);
   const [incidents, setIncidents] = useState<any[]>([]);
-  const [policies, setPolicies] = useState<any[]>([]);
-  const [audit, setAudit] = useState<any[]>([]);
-  const [graph, setGraph] = useState<any>(null);
-  const [pullCounts, setPullCounts] = useState<Record<string, { open: number; total: number }>>({});
-  const [scanCounts, setScanCounts] = useState<Record<string, number>>({});
 
   useEffect(() => {
     Promise.all([
       fetchOrgs(),
-      fetchRepos(),
+      fetchDashboard(),
       fetchIncidents(),
-      fetchPolicies(),
-      fetchAudit(),
-      fetchGraph(),
-    ]).then(([orgsData, reposData, incData, polData, auditData, graphData]) => {
+    ]).then(([orgsData, dashData, incData]) => {
       setOrg(orgsData?.organizations?.[0] ?? { name: "Organization" });
-      const r = reposData?.repos ?? [];
-      setRepos(r);
+      setDash(dashData);
       setIncidents(incData?.incidents ?? []);
-      setPolicies(polData?.policyPacks ?? []);
-      setAudit(auditData?.entries ?? []);
-      setGraph(graphData);
-      setLoading(false);
-
-      // Fetch pull counts and scan counts per repo in parallel
-      const pullPromises = r.map((repo: any) =>
-        fetchRepoPulls(repo.id || repo.name).then((d) => {
-          const pulls = d?.pulls || [];
-          return {
-            id: repo.id || repo.name,
-            open: pulls.filter((p: any) => p.status === "open").length,
-            total: pulls.length,
-          };
-        }).catch(() => ({ id: repo.id || repo.name, open: 0, total: 0 }))
-      );
-      const scanPromises = r.map((repo: any) =>
-        fetchRepoScans(repo.id || repo.name).then((d) => ({
-          id: repo.id || repo.name,
-          count: d?.scans?.length ?? 0,
-        })).catch(() => ({ id: repo.id || repo.name, count: 0 }))
-      );
-
-      Promise.all(pullPromises).then((results) => {
-        const map: Record<string, { open: number; total: number }> = {};
-        results.forEach((r) => { map[r.id] = { open: r.open, total: r.total }; });
-        setPullCounts(map);
-      });
-      Promise.all(scanPromises).then((results) => {
-        const map: Record<string, number> = {};
-        results.forEach((r) => { map[r.id] = r.count; });
-        setScanCounts(map);
-      });
-    }).catch(() => setLoading(false));
+    }).catch(() => {}).finally(() => setLoading(false));
   }, []);
 
-  if (loading) {
+  if (loading || !dash) {
     return (
       <Shell breadcrumbs={[{ label: "Dashboard" }]}>
         <div className="flex items-center justify-center h-64">
@@ -146,38 +102,9 @@ export default function DashboardPage() {
     );
   }
 
-  // ── Derived stats ──────────────────────────────────────────────────────
   const openIncidents = incidents.filter((i: any) => i.status === "open" || i.status === "in-progress");
-  const criticalIncidents = incidents.filter((i: any) => i.severity === "critical" || i.severity === "high");
-  const resolvedIncidents = incidents.filter((i: any) => i.status === "resolved" || i.status === "closed");
-
-  const totalControls = policies.reduce((sum: number, p: any) => sum + (p.controls?.length || 0), 0);
-  const totalBindings = policies.reduce((sum: number, p: any) => sum + (p.bindings?.length || 0), 0);
-
-  const repoDeps = graph?.repoDependencies?.length ?? 0;
-  const codeDeps = graph?.codeDependencies?.length ?? 0;
-
-  const totalOpenPRs = Object.values(pullCounts).reduce((s, v) => s + v.open, 0);
-  const reposScanned = Object.values(scanCounts).filter((c) => c > 0).length;
-  const reposUnscanned = repos.length - reposScanned;
-  const totalScans = Object.values(scanCounts).reduce((s, c) => s + c, 0);
-
-  const auditScans = audit.filter((e: any) => e.type === "scan");
-  const auditPRChecks = audit.filter((e: any) => e.type === "pr-check" || e.type === "agent-run");
-
-  // Severity breakdown
-  const sevCounts = { critical: 0, high: 0, medium: 0, low: 0 };
-  incidents.forEach((i: any) => {
-    const s = i.severity as keyof typeof sevCounts;
-    if (s in sevCounts) sevCounts[s]++;
-  });
-
-  // Per-repo incident counts
-  const repoIncidentMap: Record<string, number> = {};
-  incidents.forEach((i: any) => {
-    const rkey = (i.repoName || i.repo || "").split("/").pop() || "unknown";
-    repoIncidentMap[rkey] = (repoIncidentMap[rkey] || 0) + 1;
-  });
+  const criticalCount = dash.incidents.severity.critical + dash.incidents.severity.high;
+  const reposUnscanned = dash.repoCount - dash.scans.reposScanned;
 
   return (
     <Shell breadcrumbs={[{ label: "Dashboard" }]}>
@@ -206,33 +133,33 @@ export default function DashboardPage() {
         {/* ── Top-level stats ────────────────────────────────────────── */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <StatCard
-            value={repos.length}
+            value={dash.repoCount}
             label="Repositories"
-            sublabel={`${reposScanned} scanned`}
+            sublabel={`${dash.scans.reposScanned} scanned`}
             color="text-blue-400"
             icon={FolderGit2}
             href="/repos"
           />
           <StatCard
-            value={openIncidents.length}
+            value={dash.incidents.open}
             label="Open Incidents"
-            sublabel={`${criticalIncidents.length} critical/high`}
+            sublabel={`${criticalCount} critical/high`}
             color="text-red-400"
             icon={AlertCircle}
             href="/issues"
           />
           <StatCard
-            value={policies.length}
+            value={dash.policies.count}
             label="Policy Packs"
-            sublabel={`${totalControls} controls · ${totalBindings} bindings`}
+            sublabel={`${dash.policies.totalControls} controls · ${dash.policies.totalBindings} bindings`}
             color="text-amber-400"
             icon={Shield}
             href="/policies"
           />
           <StatCard
-            value={totalOpenPRs}
+            value={dash.pulls.totalOpen}
             label="Open PRs"
-            sublabel={`across ${Object.values(pullCounts).filter(v => v.open > 0).length} repos`}
+            sublabel={`across ${dash.repoStats.filter(r => r.openPulls > 0).length} repos`}
             color="text-purple-400"
             icon={GitPullRequest}
           />
@@ -240,21 +167,21 @@ export default function DashboardPage() {
 
         {/* ── Compliance health + Severity breakdown ─────────────────── */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {/* Compliance score card */}
+          {/* Scan coverage */}
           <Card>
             <CardHeader title="Scan Coverage" />
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-baseline gap-2">
                   <span className="text-4xl font-bold font-mono text-zinc-100">
-                    {repos.length > 0 ? Math.round((reposScanned / repos.length) * 100) : 0}%
+                    {dash.repoCount > 0 ? Math.round((dash.scans.reposScanned / dash.repoCount) * 100) : 0}%
                   </span>
                   <span className="text-xs text-zinc-500">repos scanned</span>
                 </div>
                 <Eye size={18} className="text-zinc-600" />
               </div>
               <MiniBar segments={[
-                { value: reposScanned, color: "bg-green-500", label: "Scanned" },
+                { value: dash.scans.reposScanned, color: "bg-green-500", label: "Scanned" },
                 { value: reposUnscanned, color: "bg-zinc-700", label: "Not scanned" },
               ]} />
               {reposUnscanned > 0 && (
@@ -263,7 +190,7 @@ export default function DashboardPage() {
                 </p>
               )}
               <div className="text-[10px] text-zinc-600 pt-1 border-t border-zinc-800">
-                {totalScans} total scans performed
+                {dash.scans.total} total scans performed
               </div>
             </div>
           </Card>
@@ -272,7 +199,7 @@ export default function DashboardPage() {
           <Card>
             <CardHeader title="Incident Severity" />
             <div className="space-y-3">
-              {incidents.length === 0 ? (
+              {dash.incidents.total === 0 ? (
                 <div className="flex items-center gap-2 py-4">
                   <CheckCircle2 size={16} className="text-green-400" />
                   <span className="text-sm text-zinc-400">No incidents recorded</span>
@@ -281,8 +208,8 @@ export default function DashboardPage() {
                 <>
                   <div className="space-y-2">
                     {(["critical", "high", "medium", "low"] as const).map((sev) => {
-                      const count = sevCounts[sev];
-                      const pct = incidents.length > 0 ? (count / incidents.length) * 100 : 0;
+                      const count = dash.incidents.severity[sev];
+                      const pct = dash.incidents.total > 0 ? (count / dash.incidents.total) * 100 : 0;
                       const barColor = sev === "critical" ? "bg-red-500"
                         : sev === "high" ? "bg-orange-500"
                         : sev === "medium" ? "bg-yellow-500"
@@ -299,8 +226,8 @@ export default function DashboardPage() {
                     })}
                   </div>
                   <MiniBar segments={[
-                    { value: openIncidents.length, color: "bg-red-500", label: "Open" },
-                    { value: resolvedIncidents.length, color: "bg-green-500", label: "Resolved" },
+                    { value: dash.incidents.open, color: "bg-red-500", label: "Open" },
+                    { value: dash.incidents.resolved, color: "bg-green-500", label: "Resolved" },
                   ]} />
                 </>
               )}
@@ -313,11 +240,11 @@ export default function DashboardPage() {
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <div className="bg-zinc-800/40 rounded p-3 text-center">
-                  <p className="text-2xl font-bold font-mono text-cyan-400">{repoDeps}</p>
+                  <p className="text-2xl font-bold font-mono text-cyan-400">{dash.graph.repoDeps}</p>
                   <p className="text-[9px] text-zinc-500 uppercase">Repo Links</p>
                 </div>
                 <div className="bg-zinc-800/40 rounded p-3 text-center">
-                  <p className="text-2xl font-bold font-mono text-teal-400">{codeDeps}</p>
+                  <p className="text-2xl font-bold font-mono text-teal-400">{dash.graph.codeDeps}</p>
                   <p className="text-[9px] text-zinc-500 uppercase">Code Links</p>
                 </div>
               </div>
@@ -406,7 +333,7 @@ export default function DashboardPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-zinc-800 bg-zinc-900/60">
-                  {["Repository", "Classification", "Incidents", "Open PRs", "Scans", "Status"].map((h) => (
+                  {["Repository", "Incidents", "Open PRs", "Scans", "Status"].map((h) => (
                     <th key={h} className="text-left px-3 py-2 text-[10px] font-semibold text-zinc-600 uppercase tracking-[0.12em]">
                       {h}
                     </th>
@@ -414,142 +341,57 @@ export default function DashboardPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/60">
-                {repos.map((repo: any) => {
-                  const rkey = repo.id || repo.name;
-                  const incCount = repoIncidentMap[rkey] || 0;
-                  const prData = pullCounts[rkey] || { open: 0, total: 0 };
-                  const scans = scanCounts[rkey] || 0;
-                  const classification = repo.profile?.dataClassification || repo.dataClassification || "—";
-                  const hasIssues = incCount > 0;
-                  const isScanned = scans > 0;
-
-                  return (
-                    <tr key={rkey} className="hover:bg-zinc-800/30 transition-colors">
-                      <td className="px-3 py-2.5">
-                        <Link href={`/repos/${rkey}`} className="font-mono text-xs text-blue-400 hover:text-blue-300">
-                          {repo.name}
-                        </Link>
-                      </td>
-                      <td className="px-3 py-2.5">
-                        <span className="font-mono text-[11px] text-zinc-400 capitalize">{classification}</span>
-                      </td>
-                      <td className="px-3 py-2.5">
-                        {incCount > 0 ? (
-                          <span className="font-mono text-[11px] text-red-400 font-semibold">{incCount}</span>
-                        ) : (
-                          <span className="text-[11px] text-zinc-700">0</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2.5">
-                        {prData.open > 0 ? (
-                          <span className="font-mono text-[11px] text-purple-400">{prData.open}</span>
-                        ) : (
-                          <span className="text-[11px] text-zinc-700">0</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2.5">
-                        {scans > 0 ? (
-                          <span className="font-mono text-[11px] text-green-400">{scans}</span>
-                        ) : (
-                          <span className="text-[11px] text-amber-400/70">none</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2.5">
-                        {!isScanned ? (
-                          <Badge variant="warning" size="sm">unscanned</Badge>
-                        ) : hasIssues ? (
-                          <Badge variant="danger" size="sm">issues</Badge>
-                        ) : (
-                          <Badge variant="success" size="sm">clean</Badge>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
+                {dash.repoStats.map((repo) => (
+                  <tr key={repo.rkey} className="hover:bg-zinc-800/30 transition-colors">
+                    <td className="px-3 py-2.5">
+                      <Link href={`/repos/${repo.rkey}`} className="font-mono text-xs text-blue-400 hover:text-blue-300">
+                        {repo.name}
+                      </Link>
+                    </td>
+                    <td className="px-3 py-2.5">
+                      {repo.incidentCount > 0 ? (
+                        <span className="font-mono text-[11px] text-red-400 font-semibold">{repo.incidentCount}</span>
+                      ) : (
+                        <span className="text-[11px] text-zinc-700">0</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      {repo.openPulls > 0 ? (
+                        <span className="font-mono text-[11px] text-purple-400">{repo.openPulls}</span>
+                      ) : (
+                        <span className="text-[11px] text-zinc-700">0</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      {repo.scanCount > 0 ? (
+                        <span className="font-mono text-[11px] text-green-400">{repo.scanCount}</span>
+                      ) : (
+                        <span className="text-[11px] text-amber-400/70">none</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      {repo.scanCount === 0 ? (
+                        <Badge variant="warning" size="sm">unscanned</Badge>
+                      ) : repo.incidentCount > 0 ? (
+                        <Badge variant="danger" size="sm">issues</Badge>
+                      ) : (
+                        <Badge variant="success" size="sm">clean</Badge>
+                      )}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
         </div>
 
-        {/* ── Policy packs + Recent activity ───────────────────────── */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Policy packs summary */}
-          <Card>
-            <CardHeader title="Policy Packs" />
-            <div className="space-y-2">
-              {policies.length === 0 ? (
-                <p className="text-xs text-zinc-600 py-2">No policy packs configured</p>
-              ) : (
-                policies.map((pack: any, i: number) => (
-                  <div key={i} className="flex items-center justify-between py-2 border-b border-zinc-800/50 last:border-0">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <Shield size={12} className="text-amber-400 flex-shrink-0" />
-                      <div className="min-w-0">
-                        <p className="text-xs text-zinc-200 truncate">{pack.name}</p>
-                        <p className="text-[9px] text-zinc-600">{pack.framework || "custom"}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-[10px] font-mono text-zinc-500">
-                        {pack.controls?.length || 0} controls
-                      </span>
-                      <span className="text-[10px] font-mono text-zinc-600">
-                        {pack.bindings?.length || 0} bound
-                      </span>
-                    </div>
-                  </div>
-                ))
-              )}
-              <Link href="/policies" className="flex items-center gap-1 text-[10px] text-blue-400 hover:text-blue-300 pt-1">
-                Manage policies <ArrowRight size={9} />
-              </Link>
-            </div>
-          </Card>
-
-          {/* Recent activity */}
-          <Card>
-            <CardHeader title="Recent Activity" />
-            <div className="space-y-1">
-              {audit.length === 0 ? (
-                <p className="text-xs text-zinc-600 py-2">No audit activity yet</p>
-              ) : (
-                audit.slice(0, 8).map((entry: any, i: number) => {
-                  const typeIcon = entry.type === "scan" ? (
-                    <Eye size={11} className="text-purple-400" />
-                  ) : entry.type === "incident" ? (
-                    <AlertCircle size={11} className="text-red-400" />
-                  ) : entry.type === "policy" ? (
-                    <Shield size={11} className="text-amber-400" />
-                  ) : (
-                    <FileText size={11} className="text-zinc-500" />
-                  );
-                  return (
-                    <div key={i} className="flex items-start gap-2 py-1.5 border-b border-zinc-800/30 last:border-0">
-                      <div className="mt-0.5">{typeIcon}</div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-[11px] text-zinc-300 line-clamp-1">{entry.description || entry.action || entry.type}</p>
-                        <p className="text-[9px] text-zinc-600">
-                          {entry.timestamp ? new Date(entry.timestamp).toLocaleString() : ""}
-                        </p>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-              <Link href="/audit" className="flex items-center gap-1 text-[10px] text-blue-400 hover:text-blue-300 pt-1">
-                Full audit log <ArrowRight size={9} />
-              </Link>
-            </div>
-          </Card>
-        </div>
-
         {/* ── Quick links footer ───────────────────────────────────── */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-2">
           {[
-            { href: "/repos", label: "Repositories", icon: FolderGit2, desc: `${repos.length} governed` },
-            { href: "/graph", label: "Dependency Map", icon: Network, desc: `${repoDeps + codeDeps} links` },
-            { href: "/policies", label: "Policies", icon: Shield, desc: `${totalControls} controls` },
-            { href: "/audit", label: "Audit Log", icon: FileText, desc: `${audit.length} entries` },
+            { href: "/repos", label: "Repositories", icon: FolderGit2, desc: `${dash.repoCount} governed` },
+            { href: "/graph", label: "Dependency Map", icon: Network, desc: `${dash.graph.repoDeps + dash.graph.codeDeps} links` },
+            { href: "/policies", label: "Policies", icon: Shield, desc: `${dash.policies.totalControls} controls` },
+            { href: "/audit", label: "Audit Log", icon: FileText, desc: "View activity" },
           ].map((link) => (
             <Link key={link.href} href={link.href}>
               <div className="border border-zinc-800 rounded p-3 hover:bg-zinc-800/40 transition-colors flex items-center gap-3">

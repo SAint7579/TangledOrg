@@ -173,6 +173,115 @@ def _delete_record(session: dict, collection: str, rkey: str) -> None:
 # ── Organization ─────────────────────────────────────────────────────────────
 
 
+@router.get("/dashboard")
+async def get_dashboard(request: Request):
+    """Single endpoint returning all dashboard stats to avoid N+1 API calls."""
+    get_authenticated_session(request)
+    session = _get_org_session()
+
+    repos = _list_records(session, "sh.tangled.repo")
+    pulls = _list_records(session, "sh.tangled.repo.pull")
+    pull_statuses = _list_records(session, "sh.tangled.repo.pull.status")
+    incidents = _list_records(session, "sh.tangled.governance.compliance.incident")
+    policies = _list_records(session, "sh.tangled.governance.policyPack")
+    scans = _list_records(session, "sh.tangled.governance.compliance.scanResult")
+    repo_deps = _list_records(session, "sh.tangled.governance.graph.repoDependency")
+    code_deps = _list_records(session, "sh.tangled.governance.graph.codeDependency")
+
+    # Build pull status map
+    status_map: dict[str, str] = {}
+    for s in pull_statuses:
+        val = s["value"]
+        pull_uri = val.get("pull", "")
+        raw = val.get("status", "")
+        ts = val.get("createdAt", "")
+        if pull_uri not in status_map or ts > status_map.get(f"{pull_uri}__ts", ""):
+            status_map[pull_uri] = raw
+            status_map[f"{pull_uri}__ts"] = ts
+
+    # Per-repo stats
+    repo_stats = []
+    for r in repos:
+        rkey = r["rkey"]
+        r_uri = r["uri"]
+        repo_did = r["value"].get("repoDid", "")
+
+        # Count pulls for this repo
+        open_pulls = 0
+        total_pulls = 0
+        for p in pulls:
+            pv = p["value"]
+            target = pv.get("target", {})
+            t_repo = target.get("repo", "") if isinstance(target, dict) else str(target)
+            if repo_did and repo_did in t_repo:
+                total_pulls += 1
+                raw_st = status_map.get(p["uri"], "sh.tangled.repo.pull.status.open")
+                if not raw_st.endswith(".merged") and not raw_st.endswith(".closed"):
+                    open_pulls += 1
+
+        # Count scans for this repo
+        scan_count = sum(
+            1 for sc in scans
+            if sc["value"].get("repo", "") == r_uri
+            or sc["value"].get("repoRkey", "") == rkey
+        )
+
+        # Count incidents for this repo
+        inc_count = sum(1 for i in incidents if rkey in i["value"].get("repo", ""))
+
+        repo_stats.append({
+            "rkey": rkey,
+            "name": r["value"].get("name", rkey),
+            "knot": r["value"].get("knot", ""),
+            "openPulls": open_pulls,
+            "totalPulls": total_pulls,
+            "scanCount": scan_count,
+            "incidentCount": inc_count,
+        })
+
+    # Incident severity breakdown
+    sev_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    open_count = 0
+    resolved_count = 0
+    for i in incidents:
+        iv = i["value"]
+        sev = iv.get("severity", "low")
+        if sev in sev_counts:
+            sev_counts[sev] += 1
+        st = iv.get("status", "open")
+        if st in ("open", "in-progress"):
+            open_count += 1
+        elif st in ("resolved", "closed"):
+            resolved_count += 1
+
+    return {
+        "repoCount": len(repos),
+        "repoStats": repo_stats,
+        "incidents": {
+            "total": len(incidents),
+            "open": open_count,
+            "resolved": resolved_count,
+            "severity": sev_counts,
+        },
+        "policies": {
+            "count": len(policies),
+            "totalControls": sum(len(p["value"].get("controls", [])) for p in policies),
+            "totalBindings": sum(len(p["value"].get("bindings", [])) for p in policies),
+        },
+        "pulls": {
+            "totalOpen": sum(r["openPulls"] for r in repo_stats),
+        },
+        "scans": {
+            "total": len(scans),
+            "reposScanned": sum(1 for r in repo_stats if r["scanCount"] > 0),
+        },
+        "graph": {
+            "repoDeps": len(repo_deps),
+            "codeDeps": len(code_deps),
+        },
+    }
+
+
 @router.get("/org")
 async def list_orgs(request: Request):
     get_authenticated_session(request)  # auth check
