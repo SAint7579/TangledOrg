@@ -738,17 +738,18 @@ async def run_agent(body: AgentRunRequest, request: Request):
 
     # Run synchronous graph in a thread pool to avoid blocking the event loop
     loop = asyncio.get_event_loop()
-    result: ComplianceState = await loop.run_in_executor(None, graph.invoke, state)
+    raw = await loop.run_in_executor(None, graph.invoke, state)
 
+    r = raw if isinstance(raw, dict) else vars(raw)
     return {
-        "gate_status": result.gate_status,
-        "gate_reason": result.gate_reason,
-        "risk_level": result.risk_level,
-        "summary": result.summary,
-        "records_written": result.records_written,
-        "agent_run_uri": result.agent_run_uri,
-        "pr_assessment_uri": result.pr_assessment_uri,
-        "error": result.error,
+        "gate_status": r.get("gate_status", ""),
+        "gate_reason": r.get("gate_reason", ""),
+        "risk_level": r.get("risk_level", ""),
+        "summary": r.get("summary", ""),
+        "records_written": r.get("records_written", 0),
+        "agent_run_uri": r.get("agent_run_uri", ""),
+        "pr_assessment_uri": r.get("pr_assessment_uri", ""),
+        "error": r.get("error"),
     }
 
 
@@ -782,24 +783,26 @@ async def run_scan(body: ScanRequest, request: Request):
 
     import asyncio
 
-    state = ScanState(repo_rkey=body.repo_rkey)
+    initial = ScanState(repo_rkey=body.repo_rkey)
     loop = asyncio.get_event_loop()
-    result: ScanState = await loop.run_in_executor(None, scan_graph.invoke, state)
+    result = await loop.run_in_executor(None, scan_graph.invoke, initial)
 
+    # LangGraph returns a dict keyed by field name
+    r = result if isinstance(result, dict) else vars(result)
     return {
-        "repo": result.repo_rkey,
-        "risk_level": result.risk_level,
-        "summary": result.summary,
-        "policy_pack": result.policy_pack_name,
-        "files_scanned": result.files_scanned,
-        "controls_passed": result.controls_passed,
-        "controls_failed": result.controls_failed,
-        "controls_warning": result.controls_warning,
-        "findings": result.findings,
-        "issues_created": result.issues_created,
-        "incidents_created": result.incidents_created,
-        "duration_ms": int((time.time() - result.started) * 1000),
-        "error": result.error,
+        "repo": r.get("repo_rkey", body.repo_rkey),
+        "risk_level": r.get("risk_level", "low"),
+        "summary": r.get("summary", ""),
+        "policy_pack": r.get("policy_pack_name", ""),
+        "files_scanned": r.get("files_scanned", 0),
+        "controls_passed": r.get("controls_passed", 0),
+        "controls_failed": r.get("controls_failed", 0),
+        "controls_warning": r.get("controls_warning", 0),
+        "findings": r.get("findings", []),
+        "issues_created": r.get("issues_created", []),
+        "incidents_created": r.get("incidents_created", []),
+        "duration_ms": int((time.time() - r.get("started", time.time())) * 1000),
+        "error": r.get("error"),
     }
 
 
