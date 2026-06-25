@@ -226,8 +226,19 @@ export interface AgentRunResult {
 }
 
 export async function runAgent(payload: AgentRunRequest): Promise<AgentRunResult | null> {
-  return apiFetch<AgentRunResult>("/api/agent/run", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
+  return apiPost<AgentRunResult>("/api/agent/run", payload);
+}
+
+// ── Agent Chat ───────────────────────────────────────────────────────────────
+
+export interface ChatMessage {
+  role: "human" | "assistant";
+  content: string;
+}
+
+export async function agentChat(
+  message: string,
+  history: ChatMessage[] = []
+): Promise<{ response: string } | null> {
+  return apiPost<{ response: string }>("/api/agent/chat", { message, history });
 }

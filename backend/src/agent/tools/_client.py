@@ -35,9 +35,14 @@ def _val(record: dict) -> dict:
     v = record.get("value") or {}
     if isinstance(v, dict):
         return v
-    # Pydantic model (e.g. known SDK type)
-    if hasattr(v, "model_dump"):
-        return v.model_dump(by_alias=True, exclude_none=True)
+    # Pydantic v2 model — model_dump must be callable (not just present as an attr)
+    model_dump = getattr(v, "model_dump", None)
+    if callable(model_dump):
+        return model_dump(by_alias=True, exclude_none=True)
+    # atproto SDK uses DotDict / similar with to_dict()
+    to_dict = getattr(v, "to_dict", None)
+    if callable(to_dict):
+        return to_dict()
     # Namespace / SimpleNamespace / DataDict
     try:
         return dict(v)
