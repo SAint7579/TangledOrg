@@ -75,7 +75,7 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
   const loadTree = useCallback((path: string) => {
     setTreeLoading(true);
     fetchRepoTree(params.repo, "main", path).then((data) => {
-      const entries = (data as any)?.entries || (data as any)?.tree || [];
+      const entries = (data as any)?.files || (data as any)?.entries || (data as any)?.tree || [];
       setTreeEntries(Array.isArray(entries) ? entries : []);
       setTreePath(path);
       setTreeLoading(false);
@@ -207,13 +207,13 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
                   <div className="divide-y divide-zinc-800/60">
                     {[...treeEntries]
                       .sort((a, b) => {
-                        const aDir = a.type === "tree" || a.mode === "040000" ? 0 : 1;
-                        const bDir = b.type === "tree" || b.mode === "040000" ? 0 : 1;
+                        const aDir = a.type === "tree" || (a.mode || "").includes("040000") ? 0 : 1;
+                        const bDir = b.type === "tree" || (b.mode || "").includes("040000") ? 0 : 1;
                         if (aDir !== bDir) return aDir - bDir;
                         return (a.name || "").localeCompare(b.name || "");
                       })
                       .map((entry: any) => {
-                        const isDir = entry.type === "tree" || entry.mode === "040000";
+                        const isDir = entry.type === "tree" || (entry.mode || "").includes("040000");
                         const name = entry.name || entry.path || "";
                         const fullPath = treePath ? `${treePath}/${name}` : name;
                         return (
