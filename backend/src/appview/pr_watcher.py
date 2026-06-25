@@ -3,11 +3,16 @@
 Since ATProto / Tangled does not support webhooks, this module polls for new
 open PRs at a configurable interval and invokes the PR compliance pipeline for
 each unprocessed PR.
+
+On merge detection, the watcher materialises potential incidents into real
+issues and incidents based on the stored PRAssessment and ImpactAssessment.
 """
 
 import asyncio
+import json
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
@@ -17,7 +22,9 @@ from src.config import settings
 logger = logging.getLogger("pr_watcher")
 
 _POLL_INTERVAL_S = 60
-_processed_prs: set[str] = set()
+
+# uri -> last known status label ("open" | "closed" | "merged")
+_pr_status_cache: dict[str, str] = {}
 _watcher_task: Optional[asyncio.Task] = None
 
 
@@ -63,6 +70,14 @@ def _resolve_clone_url(repo_record: dict, owner_did: str) -> str:
     if knot:
         return f"https://{knot}/{owner_did}/{rkey}.git"
     return ""
+
+
+def _resolve_status_label(raw: str) -> str:
+    if raw.endswith(".merged"):
+        return "merged"
+    if raw.endswith(".closed"):
+        return "closed"
+    return "open"
 
 
 def _run_pr_pipeline(pr: dict, repo_record: dict, owner_did: str) -> Optional[dict]:
@@ -114,8 +129,180 @@ def _run_pr_pipeline(pr: dict, repo_record: dict, owner_did: str) -> Optional[di
         return None
 
 
+# ---------------------------------------------------------------------------
+# Merge materialisation: create real issues + incidents from assessment data
+# ---------------------------------------------------------------------------
+
+
+def _materialize_on_merge(pr_uri: str, session: dict) -> int:
+    """When a PR is merged, create issues and incidents from its assessment.
+
+    Reads the PRAssessment, failed ControlEvaluations, and ImpactAssessment
+    for this PR and turns them into concrete issues (in the source repo and
+    any affected downstream repos) plus linked compliance incidents.
+
+    Returns the number of records created.
+    """
+    from src.agent.tools._client import _val, get_client
+    from src.agent.tools.tangled import _create_native_record
+    from src.models import Incident
+
+    client = get_client()
+    created = 0
+
+    assessments = _list_records_sync(session, "sh.tangled.governance.compliance.prAssessment")
+    assessment = None
+    for a in assessments:
+        if a["value"].get("pullRequest") == pr_uri:
+            assessment = a
+            break
+
+    if not assessment:
+        logger.info("No assessment found for merged PR %s, skipping materialisation", pr_uri)
+        return 0
+
+    av = assessment["value"]
+    assessment_uri = assessment["uri"]
+    repo_uri = av.get("repo", "")
+
+    repos = _list_records_sync(session, "sh.tangled.repo")
+    uri_to_rkey: dict[str, str] = {}
+    uri_to_did: dict[str, str] = {}
+    for r in repos:
+        r_uri = r.get("uri", "")
+        uri_to_rkey[r_uri] = r_uri.rsplit("/", 1)[-1]
+        uri_to_did[r_uri] = r["value"].get("repoDid", "")
+
+    source_rkey = uri_to_rkey.get(repo_uri, "unknown")
+    source_did = uri_to_did.get(repo_uri, "")
+    now = datetime.now(timezone.utc)
+
+    # 1. Create issues + incidents for failed control evaluations
+    evals = _list_records_sync(session, "sh.tangled.governance.compliance.controlEvaluation")
+    for ev in evals:
+        evv = ev["value"]
+        if evv.get("prAssessment") != assessment_uri:
+            continue
+        if evv.get("status") not in ("fail", "warning"):
+            continue
+
+        ctrl_rkey = (evv.get("control", "")).rsplit("/", 1)[-1]
+        sev = "high" if evv.get("status") == "fail" else "medium"
+        title = f"[PR Merged] {ctrl_rkey}: {evv.get('reason', 'Control violation')[:120]}"
+        body = (
+            f"**Severity:** {sev.upper()}\n"
+            f"**Control:** `{ctrl_rkey}`\n"
+            f"**PR Assessment:** `{assessment_uri}`\n"
+            f"**Status:** {evv.get('status', '?')}\n\n"
+            f"### Reason\n{evv.get('reason', 'No details.')}\n\n"
+            f"---\n*Materialised from PR compliance check on merge at {now.strftime('%Y-%m-%d %H:%M UTC')}*"
+        )
+
+        if not source_did:
+            continue
+
+        try:
+            issue_result = _create_native_record(
+                "sh.tangled.repo.issue",
+                {
+                    "repo": source_did,
+                    "title": title[:200],
+                    "body": body,
+                    "createdAt": now.isoformat(),
+                },
+            )
+            created += 1
+
+            incident = Incident(
+                issue=issue_result["uri"],
+                repo=repo_uri,
+                severity=sev,
+                category="other",
+                description=evv.get("reason", "")[:2000],
+                status="open",
+                created_at=now,
+            )
+            client.create_governance_record(incident)
+            created += 1
+        except Exception:
+            logger.exception("Failed to create issue/incident for control %s", ctrl_rkey)
+
+    # 2. Create issues in downstream repos from ImpactAssessment
+    impacts = _list_records_sync(session, "sh.tangled.governance.compliance.impactAssessment")
+    for imp in impacts:
+        iv = imp["value"]
+        if iv.get("pullRequest") != pr_uri:
+            continue
+
+        for edge in iv.get("affectedEdges", []):
+            ds_repo = edge.get("downstreamRepo", "")
+            ds_did = uri_to_did.get(ds_repo, "")
+            ds_rkey = uri_to_rkey.get(ds_repo, ds_repo)
+
+            if not ds_did:
+                continue
+
+            title = f"[Upstream Merged: {source_rkey}] {edge.get('reason', 'Upstream change may affect this repo')[:120]}"
+            body = (
+                f"**Upstream repo:** `{source_rkey}`\n"
+                f"**Affected path:** `{edge.get('downstreamPath', '?')}`\n"
+                f"**Action:** {edge.get('actionRequired', 'review-recommended')}\n\n"
+                f"### Reason\n{edge.get('reason', 'Upstream change affects this repo.')}\n\n"
+                f"### Recommended Action\n"
+                f"Review whether this repo needs updates to accommodate the merged upstream change.\n\n"
+                f"---\n*Created on upstream PR merge at {now.strftime('%Y-%m-%d %H:%M UTC')}*"
+            )
+
+            try:
+                _create_native_record(
+                    "sh.tangled.repo.issue",
+                    {
+                        "repo": ds_did,
+                        "title": title[:200],
+                        "body": body,
+                        "createdAt": now.isoformat(),
+                    },
+                )
+                created += 1
+            except Exception:
+                logger.exception("Failed to create downstream issue in %s", ds_rkey)
+
+    logger.info("Materialised %d records for merged PR %s", created, pr_uri)
+    return created
+
+
+# ---------------------------------------------------------------------------
+# Polling loop
+# ---------------------------------------------------------------------------
+
+
+def _build_status_map(statuses: list[dict]) -> dict[str, str]:
+    """Build a map of pull URI -> latest raw status string."""
+    status_map: dict[str, str] = {}
+    for s in statuses:
+        val = s["value"]
+        pull_uri = val.get("pull", "")
+        status_val = val.get("status", "")
+        created = val.get("createdAt", "")
+        if pull_uri not in status_map or created > status_map.get(f"{pull_uri}__ts", ""):
+            status_map[pull_uri] = status_val
+            status_map[f"{pull_uri}__ts"] = created
+    return status_map
+
+
+def _find_repo_for_pr(pr: dict, repo_map: dict[str, dict]) -> Optional[dict]:
+    """Resolve which repo record a PR belongs to."""
+    val = pr["value"]
+    target = val.get("target", {})
+    target_repo = target if isinstance(target, str) else target.get("repo", "")
+    for r_uri, r_rec in repo_map.items():
+        if target_repo and target_repo in r_uri:
+            return r_rec
+    return None
+
+
 async def _poll_once() -> int:
-    """Poll for new PRs and run compliance checks. Returns count of PRs processed."""
+    """Poll for new/changed PRs. Runs checks on new open PRs, materialises on merge."""
     try:
         session = _get_org_session_sync()
     except Exception:
@@ -126,15 +313,7 @@ async def _poll_once() -> int:
     statuses = _list_records_sync(session, "sh.tangled.repo.pull.status")
     repos = _list_records_sync(session, "sh.tangled.repo")
 
-    status_map: dict[str, str] = {}
-    for s in statuses:
-        val = s["value"]
-        pull_uri = val.get("pull", "")
-        status_val = val.get("status", "")
-        created = val.get("createdAt", "")
-        if pull_uri not in status_map or created > status_map.get(f"{pull_uri}__ts", ""):
-            status_map[pull_uri] = status_val
-            status_map[f"{pull_uri}__ts"] = created
+    status_map = _build_status_map(statuses)
 
     repo_map: dict[str, dict] = {}
     for r in repos:
@@ -146,37 +325,36 @@ async def _poll_once() -> int:
     processed = 0
     for pr in pulls:
         uri = pr["uri"]
-        if uri in _processed_prs:
-            continue
-
         raw_status = status_map.get(uri, "sh.tangled.repo.pull.status.open")
-        if not raw_status.endswith(".open"):
-            _processed_prs.add(uri)
+        current_label = _resolve_status_label(raw_status)
+        previous_label = _pr_status_cache.get(uri)
+
+        if previous_label == current_label:
             continue
 
-        val = pr["value"]
-        target = val.get("target", {})
-        target_repo = target if isinstance(target, str) else target.get("repo", "")
+        # New PR or status change detected
+        if previous_label is None and current_label == "open":
+            # Brand-new open PR → run compliance check
+            repo_record = _find_repo_for_pr(pr, repo_map)
+            if repo_record:
+                logger.info("New open PR detected: %s (%s)", uri, pr["value"].get("title", ""))
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(
+                    None, _run_pr_pipeline, pr, repo_record, session["did"]
+                )
+                if result is not None:
+                    processed += 1
 
-        repo_record = None
-        for r_uri, r_rec in repo_map.items():
-            if target_repo and target_repo in r_uri:
-                repo_record = r_rec
-                break
-
-        if not repo_record:
-            _processed_prs.add(uri)
-            continue
-
-        logger.info("New open PR detected: %s (%s)", uri, val.get("title", ""))
-
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None, _run_pr_pipeline, pr, repo_record, session["did"]
-        )
-        _processed_prs.add(uri)
-        if result is not None:
+        elif current_label == "merged" and previous_label in (None, "open"):
+            # PR merged → materialise potential incidents into real ones
+            logger.info("PR merged: %s (%s)", uri, pr["value"].get("title", ""))
+            loop = asyncio.get_event_loop()
+            count = await loop.run_in_executor(
+                None, _materialize_on_merge, uri, session
+            )
             processed += 1
+
+        _pr_status_cache[uri] = current_label
 
     return processed
 
@@ -189,7 +367,7 @@ async def _watcher_loop():
         try:
             count = await _poll_once()
             if count:
-                logger.info("Processed %d new PR(s)", count)
+                logger.info("Processed %d PR event(s)", count)
         except asyncio.CancelledError:
             logger.info("PR watcher cancelled")
             break

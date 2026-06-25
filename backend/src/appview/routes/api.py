@@ -585,6 +585,159 @@ async def get_repo_log(rkey: str, request: Request, ref: str = "main", limit: in
         raise HTTPException(status_code=502, detail=f"Cannot reach knot server: {knot}")
 
 
+@router.get("/repos/{rkey}/branches")
+async def list_repo_branches(rkey: str, request: Request, limit: int = 50):
+    """List branches for a repo from the knot server."""
+    get_authenticated_session(request)
+    repo_rec = _get_repo_record(rkey)
+    val = repo_rec["value"]
+    knot = val.get("knot", "")
+    owner_did = _get_org_session()["did"]
+
+    if not knot:
+        raise HTTPException(status_code=400, detail="Repo has no knot server configured")
+
+    try:
+        resp = httpx.get(
+            f"https://{knot}/xrpc/sh.tangled.repo.branches",
+            params={"repo": f"{owner_did}/{rkey}", "limit": limit},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        raw = resp.json()
+        branches = []
+        for b in raw.get("branches", []):
+            ref = b.get("reference", {})
+            branches.append({
+                "name": ref.get("name", ""),
+                "hash": ref.get("hash", ""),
+            })
+        return {"branches": branches}
+    except httpx.ConnectError:
+        raise HTTPException(status_code=502, detail=f"Cannot reach knot server: {knot}")
+
+
+class CreatePullRequest(BaseModel):
+    title: str
+    body: str = ""
+    sourceBranch: str
+    targetBranch: str = "main"
+
+
+@router.post("/repos/{rkey}/pulls")
+async def create_pull_request(rkey: str, body: CreatePullRequest, request: Request):
+    """Create a pull request and auto-trigger compliance check."""
+    get_authenticated_session(request)
+    session = _get_org_session()
+
+    repo_rec = _get_repo_record(rkey)
+    repo_did = repo_rec["value"].get("repoDid", "")
+    repo_uri = repo_rec["uri"]
+    knot = repo_rec["value"].get("knot", "")
+    owner_did = session["did"]
+
+    if not repo_did:
+        raise HTTPException(status_code=400, detail="Repo has no repoDid")
+
+    from datetime import datetime, timezone
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    pr_record = {
+        "$type": "sh.tangled.repo.pull",
+        "title": body.title[:200],
+        "body": body.body[:5000] if body.body else "",
+        "source": {
+            "repo": repo_did,
+            "branch": body.sourceBranch,
+        },
+        "target": {
+            "repo": repo_did,
+            "branch": body.targetBranch,
+        },
+        "rounds": [],
+        "createdAt": now_iso,
+    }
+
+    # Write PR record to PDS
+    resp = httpx.post(
+        f"{session['pds_issuer']}/xrpc/com.atproto.repo.createRecord",
+        json={
+            "repo": session["did"],
+            "collection": "sh.tangled.repo.pull",
+            "record": pr_record,
+        },
+        headers={"Authorization": f"Bearer {session['access_token']}"},
+        timeout=15,
+    )
+    if resp.status_code not in (200, 201):
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+
+    pr_result = resp.json()
+    pr_uri = pr_result.get("uri", "")
+    pr_rkey = pr_uri.rsplit("/", 1)[-1] if "/" in pr_uri else ""
+
+    # Write initial open status
+    status_record = {
+        "$type": "sh.tangled.repo.pull.status",
+        "pull": pr_uri,
+        "status": "sh.tangled.repo.pull.status.open",
+        "createdAt": now_iso,
+    }
+    httpx.post(
+        f"{session['pds_issuer']}/xrpc/com.atproto.repo.createRecord",
+        json={
+            "repo": session["did"],
+            "collection": "sh.tangled.repo.pull.status",
+            "record": status_record,
+        },
+        headers={"Authorization": f"Bearer {session['access_token']}"},
+        timeout=15,
+    )
+
+    # Auto-trigger compliance pipeline
+    compliance_result = None
+    try:
+        from src.agent.nodes import ComplianceState, graph
+
+        if graph is not None and knot:
+            import asyncio
+
+            clone_url = f"https://{knot}/{owner_did}/{rkey}.git"
+            state = ComplianceState(
+                pr_uri=pr_uri,
+                repo_uri=repo_uri,
+                repo_clone_url=clone_url,
+                pr_branch=body.sourceBranch,
+                base_branch=body.targetBranch,
+            )
+            loop = asyncio.get_event_loop()
+            raw = await loop.run_in_executor(None, graph.invoke, state)
+            r = raw if isinstance(raw, dict) else vars(raw)
+            compliance_result = {
+                "gate_status": r.get("gate_status", ""),
+                "gate_reason": r.get("gate_reason", ""),
+                "risk_level": r.get("risk_level", ""),
+                "summary": r.get("summary", ""),
+                "records_written": r.get("records_written", 0),
+                "pr_assessment_uri": r.get("pr_assessment_uri", ""),
+            }
+    except ImportError:
+        pass
+    except Exception as exc:
+        compliance_result = {"error": str(exc)}
+
+    return {
+        "uri": pr_uri,
+        "rkey": pr_rkey,
+        "title": body.title,
+        "sourceBranch": body.sourceBranch,
+        "targetBranch": body.targetBranch,
+        "status": "open",
+        "compliance": compliance_result,
+    }
+
+
 class RepoProfileCreate(BaseModel):
     repoUri: str
     orgUri: str

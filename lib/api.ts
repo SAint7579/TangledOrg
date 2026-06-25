@@ -172,6 +172,45 @@ export async function fetchPRAssessment(repoRkey: string, pullRkey: string) {
   return apiFetch<PRAssessmentResponse>(`/api/repos/${repoRkey}/pulls/${pullRkey}/assessment`);
 }
 
+// ── Branches ─────────────────────────────────────────────────────────────────
+
+export interface Branch {
+  name: string;
+  hash: string;
+  isDefault?: boolean;
+}
+
+export async function fetchRepoBranches(rkey: string) {
+  return apiFetch<{ branches: Branch[] }>(`/api/repos/${rkey}/branches`);
+}
+
+// ── Create PR ────────────────────────────────────────────────────────────────
+
+export async function createPullRequest(rkey: string, body: {
+  title: string;
+  body?: string;
+  sourceBranch: string;
+  targetBranch?: string;
+}) {
+  return apiPost<{
+    uri: string;
+    rkey: string;
+    title: string;
+    sourceBranch: string;
+    targetBranch: string;
+    status: string;
+    compliance: {
+      gate_status?: string;
+      gate_reason?: string;
+      risk_level?: string;
+      summary?: string;
+      records_written?: number;
+      pr_assessment_uri?: string;
+      error?: string;
+    } | null;
+  }>(`/api/repos/${rkey}/pulls`, body);
+}
+
 export async function fetchRepoTree(rkey: string, ref = "main", path = "") {
   const params = new URLSearchParams({ ref });
   if (path) params.set("path", path);

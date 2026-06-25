@@ -4,8 +4,8 @@ import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import {
   Shield, Lock, FileText, Settings, AlertCircle,
-  Code2, GitPullRequest, Folder, File, ChevronRight, ChevronDown,
-  ScanSearch, Loader2, CheckCircle2, XCircle, AlertTriangle, Clock,
+  Code2, GitPullRequest, GitBranch, Folder, File, ChevronRight, ChevronDown,
+  ScanSearch, Loader2, CheckCircle2, XCircle, AlertTriangle, Clock, Plus,
 } from "lucide-react";
 import { Shell } from "@/components/layout/Shell";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -14,9 +14,9 @@ import { RiskBadge } from "@/components/compliance/RiskBadge";
 import {
   fetchRepos, fetchRepoProfile, fetchPolicies, fetchIncidents,
   fetchRepoIssues, fetchRepoPulls, fetchRepoTree, runScan, fetchRepoScans,
-  fetchPRAssessment,
+  fetchPRAssessment, fetchRepoBranches, createPullRequest,
 } from "@/lib/api";
-import type { ScanResult, ScanHistoryItem, PRAssessmentResponse } from "@/lib/api";
+import type { ScanResult, ScanHistoryItem, PRAssessmentResponse, Branch } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 type Tab = "code" | "issues" | "pulls" | "compliance" | "policies" | "scan";
@@ -53,6 +53,14 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
   const [treePath, setTreePath] = useState("");
   const [treeLoading, setTreeLoading] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [showCreatePR, setShowCreatePR] = useState(false);
+  const [createPRBranch, setCreatePRBranch] = useState("");
+  const [createPRTarget, setCreatePRTarget] = useState("main");
+  const [createPRTitle, setCreatePRTitle] = useState("");
+  const [createPRBody, setCreatePRBody] = useState("");
+  const [createPRLoading, setCreatePRLoading] = useState(false);
+  const [createPRResult, setCreatePRResult] = useState<any>(null);
   const [expandedPRId, setExpandedPRId] = useState<string | null>(null);
   const [prAssessments, setPrAssessments] = useState<Record<string, PRAssessmentResponse>>({});
   const [prAssessmentLoading, setPrAssessmentLoading] = useState<string | null>(null);
@@ -98,6 +106,37 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
       loadTree("");
     }
   }, [loading, activeTab, treeEntries.length, loadTree]);
+
+  useEffect(() => {
+    if (!loading && (activeTab === "pulls" || activeTab === "code") && branches.length === 0) {
+      fetchRepoBranches(params.repo).then((data) => {
+        setBranches(data?.branches || []);
+      });
+    }
+  }, [loading, activeTab, branches.length, params.repo]);
+
+  const handleCreatePR = useCallback(async () => {
+    if (!createPRBranch || !createPRTitle) return;
+    setCreatePRLoading(true);
+    setCreatePRResult(null);
+    try {
+      const result = await createPullRequest(params.repo, {
+        title: createPRTitle,
+        body: createPRBody,
+        sourceBranch: createPRBranch,
+        targetBranch: createPRTarget,
+      });
+      setCreatePRResult(result);
+      fetchRepoPulls(params.repo).then((data) => setPulls(data?.pulls || []));
+      setCreatePRTitle("");
+      setCreatePRBody("");
+      setCreatePRBranch("");
+    } catch (err: any) {
+      setCreatePRResult({ error: err?.message || "Failed to create PR" });
+    } finally {
+      setCreatePRLoading(false);
+    }
+  }, [params.repo, createPRBranch, createPRTarget, createPRTitle, createPRBody]);
 
   const handleExpandPR = useCallback(async (prId: string) => {
     if (expandedPRId === prId) {
@@ -234,6 +273,7 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
           <div className="mt-4">
             {/* ── Code Tab ─────────────────────────── */}
             {activeTab === "code" && (
+            <>
               <Card padding={false}>
                 {pathParts.length > 0 && (
                   <div className="flex items-center gap-1 px-4 py-2.5 border-b border-zinc-800 text-xs">
@@ -306,6 +346,45 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
                   </div>
                 )}
               </Card>
+
+              {/* Branches */}
+              {branches.length > 0 && (
+                <div className="mt-4">
+                  <h3 className="text-sm font-medium text-zinc-400 flex items-center gap-2 mb-2">
+                    <GitBranch size={13} />
+                    Branches ({branches.length})
+                  </h3>
+                  <Card padding={false}>
+                    <div className="divide-y divide-zinc-800/60">
+                      {branches.map((b) => (
+                        <div key={b.name} className="flex items-center gap-3 px-4 py-2">
+                          <GitBranch size={13} className={b.name === "main" || b.name === "master" ? "text-green-400" : "text-zinc-500"} />
+                          <span className="text-sm font-mono text-zinc-300 flex-1">{b.name}</span>
+                          {(b.name === "main" || b.name === "master") && (
+                            <Badge variant="success" size="sm">default</Badge>
+                          )}
+                          {b.name !== "main" && b.name !== "master" && (
+                            <button
+                              onClick={() => {
+                                setCreatePRBranch(b.name);
+                                setCreatePRTarget("main");
+                                setCreatePRTitle(`Merge ${b.name} into main`);
+                                setShowCreatePR(true);
+                                setActiveTab("pulls");
+                              }}
+                              className="text-[10px] px-2 py-1 rounded border border-zinc-700 text-zinc-400 hover:text-blue-400 hover:border-blue-500/30 transition-colors"
+                            >
+                              Create PR
+                            </button>
+                          )}
+                          <span className="text-[10px] font-mono text-zinc-700">{b.hash?.substring(0, 7)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
+                </div>
+              )}
+            </>
             )}
 
             {/* ── Issues Tab ─────────────────────────── */}
@@ -352,8 +431,137 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
 
             {/* ── Pull Requests Tab ─────────────────────────── */}
             {activeTab === "pulls" && (
-              <div className="space-y-2">
-                {pulls.length === 0 ? (
+              <div className="space-y-4">
+                {/* Create PR form */}
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-medium text-zinc-400">Pull Requests</h3>
+                  <button
+                    onClick={() => setShowCreatePR(!showCreatePR)}
+                    className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded border border-zinc-700 text-zinc-300 hover:text-blue-400 hover:border-blue-500/30 transition-colors"
+                  >
+                    <Plus size={12} />
+                    New PR
+                  </button>
+                </div>
+
+                {showCreatePR && (
+                  <Card>
+                    <div className="space-y-3">
+                      <h4 className="text-sm font-medium text-zinc-200">Create Pull Request</h4>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-[10px] text-zinc-500 block mb-1">Source Branch</label>
+                          <select
+                            value={createPRBranch}
+                            onChange={(e) => setCreatePRBranch(e.target.value)}
+                            className="w-full bg-zinc-800 border border-zinc-700 rounded px-2.5 py-1.5 text-xs text-zinc-300 font-mono focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+                          >
+                            <option value="">Select branch...</option>
+                            {branches
+                              .filter((b) => b.name !== "main" && b.name !== "master")
+                              .map((b) => (
+                                <option key={b.name} value={b.name}>{b.name}</option>
+                              ))
+                            }
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-zinc-500 block mb-1">Target Branch</label>
+                          <select
+                            value={createPRTarget}
+                            onChange={(e) => setCreatePRTarget(e.target.value)}
+                            className="w-full bg-zinc-800 border border-zinc-700 rounded px-2.5 py-1.5 text-xs text-zinc-300 font-mono focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+                          >
+                            {branches.map((b) => (
+                              <option key={b.name} value={b.name}>{b.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-zinc-500 block mb-1">Title</label>
+                        <input
+                          type="text"
+                          value={createPRTitle}
+                          onChange={(e) => setCreatePRTitle(e.target.value)}
+                          placeholder="PR title..."
+                          className="w-full bg-zinc-800 border border-zinc-700 rounded px-2.5 py-1.5 text-xs text-zinc-300 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-zinc-500 block mb-1">Description (optional)</label>
+                        <textarea
+                          value={createPRBody}
+                          onChange={(e) => setCreatePRBody(e.target.value)}
+                          placeholder="Describe the changes..."
+                          rows={3}
+                          className="w-full bg-zinc-800 border border-zinc-700 rounded px-2.5 py-1.5 text-xs text-zinc-300 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-blue-500/50 resize-none"
+                        />
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={handleCreatePR}
+                          disabled={!createPRBranch || !createPRTitle || createPRLoading}
+                          className="flex items-center gap-1.5 text-xs px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                        >
+                          {createPRLoading ? (
+                            <><Loader2 size={12} className="animate-spin" /> Creating &amp; Running Checks...</>
+                          ) : (
+                            <><GitPullRequest size={12} /> Create PR</>
+                          )}
+                        </button>
+                        <button
+                          onClick={() => setShowCreatePR(false)}
+                          className="text-xs text-zinc-500 hover:text-zinc-300"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+
+                      {/* Inline compliance result after PR creation */}
+                      {createPRResult && (
+                        <div className="mt-2 border border-zinc-800 rounded p-3 space-y-2">
+                          {createPRResult.error ? (
+                            <p className="text-xs text-red-400">{createPRResult.error}</p>
+                          ) : (
+                            <>
+                              <div className="flex items-center gap-2">
+                                <CheckCircle2 size={12} className="text-green-400" />
+                                <span className="text-xs text-green-300">PR created: {createPRResult.title}</span>
+                              </div>
+                              {createPRResult.compliance && (
+                                <div className="space-y-2 pl-5">
+                                  <div className="flex items-center gap-2">
+                                    <RiskBadge tier={createPRResult.compliance.risk_level as any} size="sm" />
+                                    <span className={cn(
+                                      "text-[9px] px-1.5 py-0.5 rounded font-mono font-semibold uppercase",
+                                      createPRResult.compliance.gate_status === "pass" ? "bg-green-500/10 text-green-400" :
+                                      createPRResult.compliance.gate_status === "warning" ? "bg-yellow-500/10 text-yellow-400" :
+                                      createPRResult.compliance.gate_status === "blocked" ? "bg-red-500/10 text-red-400" :
+                                      "bg-orange-500/10 text-orange-400"
+                                    )}>
+                                      {createPRResult.compliance.gate_status}
+                                    </span>
+                                  </div>
+                                  <p className="text-xs text-zinc-400">{createPRResult.compliance.summary}</p>
+                                  {createPRResult.compliance.gate_reason && (
+                                    <p className="text-[10px] text-zinc-600">{createPRResult.compliance.gate_reason}</p>
+                                  )}
+                                  <p className="text-[9px] text-zinc-700 italic">
+                                    Potential incidents shown above. They become real on merge.
+                                    Expand the PR below for full details.
+                                  </p>
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </Card>
+                )}
+
+                {pulls.length === 0 && !showCreatePR ? (
                   <Card>
                     <div className="text-center py-8">
                       <GitPullRequest size={32} className="text-zinc-700 mx-auto mb-3" />
@@ -488,36 +696,81 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
                                   </div>
                                 </div>
 
-                                {/* Control evaluations */}
-                                {assessment.controlEvaluations.length > 0 && (
-                                  <div className="space-y-1">
-                                    <h4 className="text-xs text-zinc-500">Control Evaluations</h4>
-                                    <div className="divide-y divide-zinc-800/60">
-                                      {assessment.controlEvaluations.map((ev) => (
-                                        <div key={ev.id} className="flex items-start gap-2 py-1.5">
-                                          {ev.status === "pass" ? (
-                                            <CheckCircle2 size={11} className="text-green-400 mt-0.5 flex-shrink-0" />
-                                          ) : ev.status === "fail" ? (
-                                            <XCircle size={11} className="text-red-400 mt-0.5 flex-shrink-0" />
-                                          ) : (
-                                            <AlertTriangle size={11} className="text-yellow-400 mt-0.5 flex-shrink-0" />
-                                          )}
-                                          <div className="flex-1 min-w-0">
-                                            <span className="text-[10px] font-mono text-zinc-400">{ev.control}</span>
-                                            <p className="text-[10px] text-zinc-500 mt-0.5">{ev.reason}</p>
+                                {/* Potential incidents (control evaluations) */}
+                                {assessment.controlEvaluations.length > 0 && (() => {
+                                  const failures = assessment.controlEvaluations.filter(
+                                    (ev) => ev.status === "fail" || ev.status === "warning"
+                                  );
+                                  const passes = assessment.controlEvaluations.filter(
+                                    (ev) => ev.status === "pass"
+                                  );
+                                  return (
+                                    <div className="space-y-2">
+                                      {failures.length > 0 && (
+                                        <div className="space-y-1">
+                                          <h4 className="text-xs text-zinc-500 flex items-center gap-1.5">
+                                            <AlertTriangle size={10} className="text-orange-400" />
+                                            Potential Incidents ({failures.length})
+                                          </h4>
+                                          <p className="text-[9px] text-zinc-600 italic">
+                                            These become real incidents &amp; issues when the PR is merged.
+                                          </p>
+                                          <div className="divide-y divide-zinc-800/60 border border-orange-900/20 rounded bg-orange-950/10 px-2">
+                                            {failures.map((ev) => (
+                                              <div key={ev.id} className="flex items-start gap-2 py-2">
+                                                {ev.status === "fail" ? (
+                                                  <XCircle size={11} className="text-red-400 mt-0.5 flex-shrink-0" />
+                                                ) : (
+                                                  <AlertTriangle size={11} className="text-yellow-400 mt-0.5 flex-shrink-0" />
+                                                )}
+                                                <div className="flex-1 min-w-0">
+                                                  <div className="flex items-center gap-2">
+                                                    <span className="text-[10px] font-mono text-zinc-400">{ev.control}</span>
+                                                    <span className={cn(
+                                                      "text-[8px] px-1 py-0.5 rounded font-semibold uppercase",
+                                                      ev.status === "fail" ? "bg-red-500/10 text-red-400" : "bg-yellow-500/10 text-yellow-400"
+                                                    )}>
+                                                      {ev.status}
+                                                    </span>
+                                                  </div>
+                                                  <p className="text-[10px] text-zinc-500 mt-0.5">{ev.reason}</p>
+                                                </div>
+                                              </div>
+                                            ))}
                                           </div>
                                         </div>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
+                                      )}
 
-                                {/* Downstream impact */}
+                                      {passes.length > 0 && (
+                                        <div className="space-y-1">
+                                          <h4 className="text-xs text-zinc-500">Passed Controls ({passes.length})</h4>
+                                          <div className="divide-y divide-zinc-800/60">
+                                            {passes.map((ev) => (
+                                              <div key={ev.id} className="flex items-start gap-2 py-1.5">
+                                                <CheckCircle2 size={11} className="text-green-400 mt-0.5 flex-shrink-0" />
+                                                <div className="flex-1 min-w-0">
+                                                  <span className="text-[10px] font-mono text-zinc-400">{ev.control}</span>
+                                                  <p className="text-[10px] text-zinc-600 mt-0.5">{ev.reason}</p>
+                                                </div>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
+
+                                {/* Downstream impact (potential) */}
                                 {assessment.impact && assessment.impact.affectedEdges.length > 0 && (
                                   <div className="space-y-1">
-                                    <h4 className="text-xs text-zinc-500">
-                                      Downstream Impact ({assessment.impact.affectedEdges.length} repo{assessment.impact.affectedEdges.length > 1 ? "s" : ""})
+                                    <h4 className="text-xs text-zinc-500 flex items-center gap-1.5">
+                                      <AlertTriangle size={10} className="text-orange-400" />
+                                      Potential Downstream Impact ({assessment.impact.affectedEdges.length} repo{assessment.impact.affectedEdges.length > 1 ? "s" : ""})
                                     </h4>
+                                    <p className="text-[9px] text-zinc-600 italic">
+                                      Issues will be created in these repos when the PR is merged.
+                                    </p>
                                     <div className="divide-y divide-zinc-800/60">
                                       {assessment.impact.affectedEdges.map((edge, i) => (
                                         <div key={i} className="py-1.5">
