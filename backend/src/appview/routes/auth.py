@@ -207,6 +207,8 @@ def get_authenticated_session(request: Request) -> dict:
     """Extract and validate the session from request.
 
     Accepts both Authorization: Bearer <token> and cookie-based sessions.
+    If the OAuth access token is close to expiry (or already expired),
+    it is refreshed automatically using the stored refresh_token.
     """
     store = _get_store()
     token = _extract_token(request)
@@ -216,5 +218,62 @@ def get_authenticated_session(request: Request) -> dict:
     session = store.get_session(token)
     if not session:
         raise HTTPException(status_code=401, detail="Session expired")
+
+    session = _maybe_refresh(store, token, session)
+    return session
+
+
+def _maybe_refresh(store: SessionStore, session_id: str, session: dict) -> dict:
+    """Refresh the OAuth access token if it looks expired or missing."""
+    refresh_token = session.get("refresh_token", "")
+    if not refresh_token:
+        return session
+
+    from datetime import datetime, timezone
+    expires_at = session.get("expires_at", "")
+    if expires_at:
+        try:
+            exp = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc)
+            if (exp - now).total_seconds() > 60:
+                return session  # still fresh
+        except (ValueError, TypeError):
+            pass
+    else:
+        # No expiry recorded -- try refresh proactively
+        pass
+
+    try:
+        private_jwk = json.loads(session["dpop_private_key"]) if isinstance(session["dpop_private_key"], str) else session["dpop_private_key"]
+        private_key = jwk_to_key(private_jwk)
+        pub_jwk = public_jwk(private_jwk)
+        pds_issuer = session["pds_issuer"]
+
+        token_endpoint = discover_token_endpoint(pds_issuer)
+        base_url = settings.backend_url or ""
+        client_id = f"{base_url}/.well-known/atproto-client-metadata.json" if base_url else ""
+
+        refresh_data = {
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+        }
+        if client_id:
+            refresh_data["client_id"] = client_id
+
+        tokens = dpop_post_form(token_endpoint, refresh_data, private_key, pub_jwk)
+        new_access = tokens.get("access_token")
+        if new_access:
+            store.update_tokens(
+                session_id,
+                access_token=new_access,
+                refresh_token=tokens.get("refresh_token", refresh_token),
+                expires_at=tokens.get("expires_at"),
+            )
+            session = store.get_session(session_id) or session
+            import logging
+            logging.getLogger("auth").info("Refreshed OAuth token for %s", session.get("handle", "?"))
+    except Exception:
+        import logging
+        logging.getLogger("auth").warning("Token refresh failed for %s", session.get("handle", "?"), exc_info=True)
 
     return session

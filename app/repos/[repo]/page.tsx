@@ -573,8 +573,17 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
                           ) : (
                             <>
                               <div className="flex items-center gap-2">
-                                <CheckCircle2 size={12} className="text-green-400" />
-                                <span className="text-xs text-green-300">PR created: {createPRResult.title}</span>
+                                {createPRResult.warning ? (
+                                  <>
+                                    <AlertTriangle size={12} className="text-yellow-400" />
+                                    <span className="text-xs text-yellow-300">{createPRResult.warning}</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <CheckCircle2 size={12} className="text-green-400" />
+                                    <span className="text-xs text-green-300">PR created: {createPRResult.title}</span>
+                                  </>
+                                )}
                               </div>
                               {createPRResult.compliance && (
                                 <div className="space-y-2 pl-5">

@@ -32,37 +32,42 @@ def _dpop_post_resource(
     """POST to a resource server with a DPoP-bound access token.
 
     Handles the use_dpop_nonce retry dance. Supports both form and JSON bodies.
+    Redirects are NOT followed so callers can inspect Location/HX-Location.
     """
     private_key = jwk_to_key(dpop_private_key_jwk)
     pub_jwk = public_jwk(dpop_private_key_jwk)
     nonce: str | None = None
+    no_redirect = httpx.Client(follow_redirects=False, timeout=30)
 
-    for _ in range(2):
-        proof = make_dpop_proof(
-            private_key, pub_jwk, "POST", url,
-            nonce=nonce, access_token=access_token,
-        )
-        headers = {
-            "Authorization": f"DPoP {access_token}",
-            "DPoP": proof,
-        }
-        if json_body is not None:
-            r = httpx.post(url, json=json_body, headers=headers, timeout=30)
-        else:
-            r = httpx.post(url, data=data or {}, headers=headers, timeout=30)
+    try:
+        for _ in range(2):
+            proof = make_dpop_proof(
+                private_key, pub_jwk, "POST", url,
+                nonce=nonce, access_token=access_token,
+            )
+            headers = {
+                "Authorization": f"DPoP {access_token}",
+                "DPoP": proof,
+            }
+            if json_body is not None:
+                r = no_redirect.post(url, json=json_body, headers=headers)
+            else:
+                r = no_redirect.post(url, data=data or {}, headers=headers)
 
-        if r.status_code in (400, 401):
-            try:
-                err = r.json().get("error")
-            except Exception:
-                err = None
-            if err == "use_dpop_nonce":
-                new_nonce = r.headers.get("DPoP-Nonce")
-                if new_nonce and new_nonce != nonce:
-                    nonce = new_nonce
-                    continue
+            if r.status_code in (400, 401):
+                try:
+                    err = r.json().get("error")
+                except Exception:
+                    err = None
+                if err == "use_dpop_nonce":
+                    new_nonce = r.headers.get("DPoP-Nonce")
+                    if new_nonce and new_nonce != nonce:
+                        nonce = new_nonce
+                        continue
+            return r
         return r
-    return r
+    finally:
+        no_redirect.close()
 
 router = APIRouter(prefix="/api", tags=["api"])
 
@@ -775,10 +780,23 @@ async def merge_pull_request(rkey: str, pull_rkey: str, request: Request):
         dpop_private_key_jwk=dpop_key_jwk,
         data={},
     )
-    log.info("Tangled merge: %s %s", merge_resp.status_code, merge_resp.text[:200])
 
-    knot_merged = merge_resp.status_code in (200, 201, 204, 302, 303)
-    knot_error = None if knot_merged else f"Tangled merge returned {merge_resp.status_code}: {merge_resp.text[:200]}"
+    merge_status = merge_resp.status_code
+    merge_location = (
+        merge_resp.headers.get("hx-location", "")
+        or merge_resp.headers.get("location", "")
+    )
+    log.info("Tangled merge: status=%s location=%s body=%s", merge_status, merge_location, merge_resp.text[:300])
+
+    if merge_location and ("/login" in merge_location or "/oauth" in merge_location):
+        log.error("Tangled merge auth failed — redirected to login")
+        raise HTTPException(
+            status_code=401,
+            detail="Tangled authentication failed. Please log out and log in again.",
+        )
+
+    knot_merged = (200 <= merge_status < 400)
+    knot_error = None if knot_merged else f"Tangled merge returned {merge_status}: {merge_resp.text[:200]}"
 
     # ── Step 2: Trigger normal repo scan on the merged branch ────────
     import asyncio
@@ -941,11 +959,31 @@ async def create_pull_request(rkey: str, body: CreatePullRequest, request: Reque
     )
 
     status = tangled_resp.status_code
-    location = tangled_resp.headers.get("location", "") or tangled_resp.headers.get("hx-location", "")
-    log.info("Tangled PR creation: status=%s location=%s", status, location)
+    location = (
+        tangled_resp.headers.get("hx-location", "")
+        or tangled_resp.headers.get("location", "")
+    )
+    log.info("Tangled PR creation: status=%s location=%s body=%s", status, location, tangled_resp.text[:300])
 
-    # 2xx = direct success, 3xx = redirect (success for form endpoints)
-    tangled_ok = status in (200, 201, 302, 303, 307, 308)
+    # A redirect to /login means auth failed
+    if location and ("/login" in location or "/oauth" in location):
+        log.error("Tangled PR creation auth failed — redirected to login: %s", location)
+        raise HTTPException(
+            status_code=401,
+            detail="Tangled authentication failed. Please log out and log in again.",
+        )
+
+    # 2xx = direct success, 3xx with /pulls/ in location = redirect to new PR
+    tangled_ok = (200 <= status < 300) or (
+        300 <= status < 400 and "/pulls/" in location
+    )
+
+    if not tangled_ok and 300 <= status < 400:
+        # Redirect but not to a PR page — treat as probable success and
+        # fall through to PDS polling (some appview versions redirect to
+        # the repo pulls list instead of the specific PR).
+        log.warning("Tangled PR redirect location=%s — will poll PDS", location)
+        tangled_ok = True
 
     if not tangled_ok:
         log.error("Tangled PR creation failed: %s %s", status, tangled_resp.text[:500])
