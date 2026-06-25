@@ -610,20 +610,28 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
                   </Card>
                 ) : (
                   issues.map((issue: any) => (
-                    <Card key={issue.id} className="hover:border-zinc-700 transition-colors">
+                    <Card key={issue.id} className={cn(
+                      "hover:border-zinc-700 transition-colors",
+                      issue.state === "superseded" && "opacity-50"
+                    )}>
                       <div className="flex items-start gap-3">
                         <AlertCircle
                           size={16}
                           className={cn(
                             "mt-0.5 flex-shrink-0",
-                            issue.state === "open" ? "text-green-400" : "text-zinc-600"
+                            issue.state === "open" ? "text-green-400"
+                              : issue.state === "superseded" ? "text-zinc-600"
+                              : "text-zinc-600"
                           )}
                         />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-sm font-medium text-zinc-200">{issue.title}</span>
+                            <span className={cn(
+                              "text-sm font-medium",
+                              issue.state === "superseded" ? "text-zinc-500 line-through" : "text-zinc-200"
+                            )}>{issue.title}</span>
                             <Badge
-                              variant={issue.state === "open" ? "success" : "neutral"}
+                              variant={issue.state === "open" ? "success" : issue.state === "superseded" ? "warning" : "neutral"}
                               size="sm"
                             >
                               {issue.state}

@@ -8,6 +8,28 @@ import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { fetchRepos, fetchDashboard, runScan, fetchTaskStatus } from "@/lib/api";
 
+const SCAN_TASKS_KEY = "tangled_repo_scans";
+
+function getPersistedScans(): Record<string, string> {
+  try {
+    return JSON.parse(sessionStorage.getItem(SCAN_TASKS_KEY) || "{}");
+  } catch { return {}; }
+}
+function persistScan(repoRkey: string, taskId: string) {
+  try {
+    const m = getPersistedScans();
+    m[repoRkey] = taskId;
+    sessionStorage.setItem(SCAN_TASKS_KEY, JSON.stringify(m));
+  } catch { /* ignore */ }
+}
+function clearPersistedScan(repoRkey: string) {
+  try {
+    const m = getPersistedScans();
+    delete m[repoRkey];
+    sessionStorage.setItem(SCAN_TASKS_KEY, JSON.stringify(m));
+  } catch { /* ignore */ }
+}
+
 export default function ReposPage() {
   const [repos, setRepos] = useState<any[]>([]);
   const [scanCounts, setScanCounts] = useState<Record<string, number>>({});
@@ -18,7 +40,6 @@ export default function ReposPage() {
   const load = useCallback(async () => {
     const [reposRes, dashRes] = await Promise.all([fetchRepos(), fetchDashboard()]);
     setRepos(reposRes?.repos ?? []);
-    // Build rkey → scanCount map from dashboard stats
     const counts: Record<string, number> = {};
     for (const stat of dashRes?.repoStats ?? []) {
       counts[stat.rkey] = stat.scanCount;
@@ -29,6 +50,34 @@ export default function ReposPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  const pollTask = useCallback((repoRkey: string, taskId: string) => {
+    const poll = async () => {
+      const status = await fetchTaskStatus(taskId);
+      if (!status || status.status === "completed") {
+        setScanning(p => ({ ...p, [repoRkey]: false }));
+        setScanDone(p => ({ ...p, [repoRkey]: true }));
+        setScanCounts(p => ({ ...p, [repoRkey]: (p[repoRkey] ?? 0) + 1 }));
+        clearPersistedScan(repoRkey);
+      } else if (status.status === "failed") {
+        setScanning(p => ({ ...p, [repoRkey]: false }));
+        clearPersistedScan(repoRkey);
+      } else {
+        setTimeout(poll, 3000);
+      }
+    };
+    setTimeout(poll, 2000);
+  }, []);
+
+  // Resume polling for scans that were running before refresh
+  useEffect(() => {
+    if (loading) return;
+    const persisted = getPersistedScans();
+    for (const [repoRkey, taskId] of Object.entries(persisted)) {
+      setScanning(p => ({ ...p, [repoRkey]: true }));
+      pollTask(repoRkey, taskId);
+    }
+  }, [loading, pollTask]);
+
   const handleScan = async (e: React.MouseEvent, repoRkey: string) => {
     e.preventDefault();
     setScanning(p => ({ ...p, [repoRkey]: true }));
@@ -37,19 +86,8 @@ export default function ReposPage() {
       setScanning(p => ({ ...p, [repoRkey]: false }));
       return;
     }
-    const poll = async () => {
-      const status = await fetchTaskStatus(taskRes.taskId);
-      if (!status || status.status === "completed") {
-        setScanning(p => ({ ...p, [repoRkey]: false }));
-        setScanDone(p => ({ ...p, [repoRkey]: true }));
-        setScanCounts(p => ({ ...p, [repoRkey]: (p[repoRkey] ?? 0) + 1 }));
-      } else if (status.status === "failed") {
-        setScanning(p => ({ ...p, [repoRkey]: false }));
-      } else {
-        setTimeout(poll, 3000);
-      }
-    };
-    setTimeout(poll, 2000);
+    persistScan(repoRkey, taskRes.taskId);
+    pollTask(repoRkey, taskRes.taskId);
   };
 
   if (loading) {

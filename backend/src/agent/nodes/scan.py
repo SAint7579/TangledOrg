@@ -638,6 +638,53 @@ If there are no cross-repo issues, return {{"cross_repo_findings": []}}"""
 # ---------------------------------------------------------------------------
 
 
+def _supersede_previous_scan_issues(client, repo_did: str, now):
+    """Mark open issues from prior scans as 'superseded'.
+
+    Scan-created issues are identified by their title starting with '['.
+    For each one, we write a state record so the UI can distinguish
+    stale findings from the current scan.
+    """
+    from src.agent.tools.tangled import _create_native_record
+
+    try:
+        issues = client.list_records("sh.tangled.repo.issue").get("records", [])
+        states = client.list_records("sh.tangled.repo.issue.state").get("records", [])
+
+        # Build latest state per issue URI
+        state_map: dict[str, str] = {}
+        ts_map: dict[str, str] = {}
+        for s in states:
+            v = s.get("value", {})
+            issue_uri = v.get("issue", "")
+            ts = v.get("createdAt", "")
+            if issue_uri not in ts_map or ts > ts_map[issue_uri]:
+                state_map[issue_uri] = v.get("state", "")
+                ts_map[issue_uri] = ts
+
+        for iss in issues:
+            v = iss.get("value", {})
+            if v.get("repo") != repo_did:
+                continue
+            title = v.get("title", "")
+            # Scan-created issues have titles like "[MISRA-1] ..."
+            if not title.startswith("["):
+                continue
+            uri = iss.get("uri", "")
+            current = state_map.get(uri, "sh.tangled.repo.issue.state.open")
+            if current.endswith(".open"):
+                _create_native_record(
+                    "sh.tangled.repo.issue.state",
+                    {
+                        "issue": uri,
+                        "state": "sh.tangled.repo.issue.state.superseded",
+                        "createdAt": now.isoformat(),
+                    },
+                )
+    except Exception:
+        pass
+
+
 def report_findings(state: ScanState) -> ScanState:
     """Create issues and incidents for each finding."""
     if state.error and not state.findings:
@@ -652,6 +699,9 @@ def report_findings(state: ScanState) -> ScanState:
         repo_did = _repo_did_for_rkey(state.repo_rkey)
         client = get_client()
         now = datetime.now(timezone.utc)
+
+        # Mark previous scan-created issues as superseded
+        _supersede_previous_scan_issues(client, repo_did, now)
 
         # Deduplicate: group findings by (file, control_id) to avoid spamming
         seen = set()

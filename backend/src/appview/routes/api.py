@@ -663,7 +663,12 @@ async def list_repo_issues(rkey: str, request: Request):
             continue
         uri = iss["uri"]
         raw_state = state_map.get(uri, "sh.tangled.repo.issue.state.open")
-        state_label = "closed" if raw_state.endswith(".closed") else "open"
+        if raw_state.endswith(".superseded"):
+            state_label = "superseded"
+        elif raw_state.endswith(".closed"):
+            state_label = "closed"
+        else:
+            state_label = "open"
         result.append({
             "id": iss["rkey"],
             "uri": uri,
