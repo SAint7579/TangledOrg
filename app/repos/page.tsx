@@ -36,8 +36,8 @@ export default function ReposPage() {
     <Shell breadcrumbs={[{ label: "Repos" }]}>
       <div className="max-w-7xl mx-auto space-y-5">
         <div>
-          <h1 className="text-xl font-bold text-zinc-100">Repositories</h1>
-          <p className="text-sm text-zinc-500 mt-1">
+          <h1 className="text-xl font-bold" style={{ color: "var(--text-primary)" }}>Repositories</h1>
+          <p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>
             {repos.length} repos tracked via AT Protocol
           </p>
         </div>
@@ -86,7 +86,12 @@ export default function ReposPage() {
                         {regulations.map((reg: string) => (
                           <span
                             key={reg}
-                            className="text-[9px] bg-zinc-800 text-zinc-400 border border-zinc-700/50 px-1.5 py-0.5 rounded font-mono"
+                            className="text-[9px] px-1.5 py-0.5 rounded font-mono border"
+                            style={{
+                              color: "var(--badge-default-text)",
+                              backgroundColor: "var(--hover-bg)",
+                              borderColor: "var(--badge-default-border)",
+                            }}
                           >
                             {reg}
                           </span>
