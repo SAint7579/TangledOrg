@@ -6,7 +6,7 @@ import { Shield, ScanLine, CheckCircle2, Clock } from "lucide-react";
 import { Shell } from "@/components/layout/Shell";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
-import { fetchRepos, fetchDashboard, runScan } from "@/lib/api";
+import { fetchRepos, fetchDashboard, runScan, fetchTaskStatus } from "@/lib/api";
 
 export default function ReposPage() {
   const [repos, setRepos] = useState<any[]>([]);
@@ -30,12 +30,26 @@ export default function ReposPage() {
   useEffect(() => { load(); }, [load]);
 
   const handleScan = async (e: React.MouseEvent, repoRkey: string) => {
-    e.preventDefault(); // don't navigate into the repo
+    e.preventDefault();
     setScanning(p => ({ ...p, [repoRkey]: true }));
-    await runScan(repoRkey);
-    setScanning(p => ({ ...p, [repoRkey]: false }));
-    setScanDone(p => ({ ...p, [repoRkey]: true }));
-    setScanCounts(p => ({ ...p, [repoRkey]: (p[repoRkey] ?? 0) + 1 }));
+    const taskRes = await runScan(repoRkey);
+    if (!taskRes?.taskId) {
+      setScanning(p => ({ ...p, [repoRkey]: false }));
+      return;
+    }
+    const poll = async () => {
+      const status = await fetchTaskStatus(taskRes.taskId);
+      if (!status || status.status === "completed") {
+        setScanning(p => ({ ...p, [repoRkey]: false }));
+        setScanDone(p => ({ ...p, [repoRkey]: true }));
+        setScanCounts(p => ({ ...p, [repoRkey]: (p[repoRkey] ?? 0) + 1 }));
+      } else if (status.status === "failed") {
+        setScanning(p => ({ ...p, [repoRkey]: false }));
+      } else {
+        setTimeout(poll, 3000);
+      }
+    };
+    setTimeout(poll, 2000);
   };
 
   if (loading) {

@@ -81,6 +81,28 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
   const [complianceProgress, setComplianceProgress] = useState("");
   const [complianceRunningPR, setComplianceRunningPR] = useState<string | null>(null);
 
+  // Persist/restore running task IDs across page refreshes
+  const taskStorageKey = `tangled_tasks_${params.repo}`;
+
+  const persistTask = useCallback((type: "scan" | "compliance", taskId: string, prRkey?: string) => {
+    try {
+      const raw = sessionStorage.getItem(taskStorageKey);
+      const tasks = raw ? JSON.parse(raw) : {};
+      tasks[type] = { taskId, prRkey: prRkey || null };
+      sessionStorage.setItem(taskStorageKey, JSON.stringify(tasks));
+    } catch { /* ignore */ }
+  }, [taskStorageKey]);
+
+  const clearPersistedTask = useCallback((type: "scan" | "compliance") => {
+    try {
+      const raw = sessionStorage.getItem(taskStorageKey);
+      if (!raw) return;
+      const tasks = JSON.parse(raw);
+      delete tasks[type];
+      sessionStorage.setItem(taskStorageKey, JSON.stringify(tasks));
+    } catch { /* ignore */ }
+  }, [taskStorageKey]);
+
   useEffect(() => {
     const rkey = params.repo;
     Promise.all([
@@ -101,6 +123,75 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
       setLoading(false);
     });
   }, [params.repo]);
+
+  // Resume polling for any tasks that were running before refresh
+  useEffect(() => {
+    if (loading) return;
+    try {
+      const raw = sessionStorage.getItem(taskStorageKey);
+      if (!raw) return;
+      const tasks = JSON.parse(raw);
+
+      if (tasks.scan?.taskId) {
+        const scanTaskId = tasks.scan.taskId;
+        setScanRunning(true);
+        setScanProgress("Resuming scan...");
+        const pollScan = async () => {
+          const status = await fetchTaskStatus(scanTaskId);
+          if (!status || status.status === "completed") {
+            setScanRunning(false);
+            clearPersistedTask("scan");
+            if (status?.result) {
+              setScanResult(status.result as unknown as ScanResult);
+            }
+            loadScanHistory();
+          } else if (status.status === "failed") {
+            setScanRunning(false);
+            setScanError(status.error || "Scan failed.");
+            clearPersistedTask("scan");
+          } else {
+            setScanProgress(status.progress || "Processing...");
+            setTimeout(pollScan, 3000);
+          }
+        };
+        pollScan();
+      }
+
+      if (tasks.compliance?.taskId) {
+        const compTaskId = tasks.compliance.taskId;
+        const prRkey = tasks.compliance.prRkey;
+        setComplianceTaskId(compTaskId);
+        setComplianceRunningPR(prRkey);
+        setComplianceProgress("Resuming compliance check...");
+        const pollComp = async () => {
+          const status = await fetchTaskStatus(compTaskId);
+          if (!status || status.status === "completed") {
+            setComplianceTaskId(null);
+            setComplianceRunningPR(null);
+            setComplianceProgress("");
+            clearPersistedTask("compliance");
+            fetchRepoPulls(params.repo).then((data) => setPulls(data?.pulls || []));
+            if (prRkey) {
+              const assessment = await fetchPRAssessment(params.repo, prRkey);
+              if (assessment) {
+                setPrAssessments((prev) => ({ ...prev, [prRkey]: assessment }));
+              }
+            }
+          } else if (status.status === "failed") {
+            setComplianceProgress(`Failed: ${status.error || "Unknown error"}`);
+            setComplianceTaskId(null);
+            setComplianceRunningPR(null);
+            clearPersistedTask("compliance");
+          } else {
+            setComplianceProgress(status.progress || "Processing...");
+            setTimeout(pollComp, 3000);
+          }
+        };
+        pollComp();
+      }
+    } catch { /* ignore corrupt storage */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, taskStorageKey]);
 
   const loadTree = useCallback((path: string) => {
     setTreeLoading(true);
@@ -156,12 +247,14 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
         setComplianceTaskId(result.complianceTaskId);
         setComplianceProgress("Starting compliance check...");
         setComplianceRunningPR(result.rkey);
+        persistTask("compliance", result.complianceTaskId, result.rkey);
         const pollCompliance = async () => {
           const status = await fetchTaskStatus(result.complianceTaskId!);
           if (!status) {
             setComplianceProgress("Lost connection.");
             setComplianceTaskId(null);
             setComplianceRunningPR(null);
+            clearPersistedTask("compliance");
             return;
           }
           setComplianceProgress(status.progress || "Processing...");
@@ -169,6 +262,7 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
             setComplianceTaskId(null);
             setComplianceProgress("");
             setComplianceRunningPR(null);
+            clearPersistedTask("compliance");
             fetchRepoPulls(params.repo).then((data) => setPulls(data?.pulls || []));
             if (result.rkey) {
               const assessment = await fetchPRAssessment(params.repo, result.rkey);
@@ -180,6 +274,7 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
             setComplianceProgress(`Failed: ${status.error || "Unknown error"}`);
             setComplianceTaskId(null);
             setComplianceRunningPR(null);
+            clearPersistedTask("compliance");
           } else {
             setTimeout(pollCompliance, 3000);
           }
@@ -190,7 +285,7 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
       setCreatePRResult({ error: err?.message || "Failed to create PR" });
       setCreatePRLoading(false);
     }
-  }, [params.repo, createPRBranch, createPRTarget, createPRTitle, createPRBody]);
+  }, [params.repo, createPRBranch, createPRTarget, createPRTitle, createPRBody, persistTask, clearPersistedTask]);
 
   const handleClosePR = useCallback(async (prId: string) => {
     if (!confirm("Close this PR? This cannot be undone.")) return;
@@ -270,12 +365,14 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
         setScanRunning(false);
         return;
       }
+      persistTask("scan", taskResponse.taskId);
 
       const poll = async () => {
         const status = await fetchTaskStatus(taskResponse.taskId);
         if (!status) {
           setScanError("Lost connection to scan task.");
           setScanRunning(false);
+          clearPersistedTask("scan");
           return;
         }
         setScanProgress(status.progress || "Processing...");
@@ -284,6 +381,7 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
           const result = status.result as unknown as ScanResult;
           setScanResult(result);
           setScanRunning(false);
+          clearPersistedTask("scan");
           loadScanHistory();
           if (result.issues_created?.length) {
             fetchRepoIssues(params.repo).then((data) => setIssues(data?.issues || []));
@@ -291,6 +389,7 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
         } else if (status.status === "failed") {
           setScanError(status.error || "Scan failed.");
           setScanRunning(false);
+          clearPersistedTask("scan");
         } else {
           setTimeout(poll, 3000);
         }
@@ -300,7 +399,7 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
       setScanError(err?.message || "Unknown error");
       setScanRunning(false);
     }
-  }, [params.repo, loadScanHistory]);
+  }, [params.repo, loadScanHistory, persistTask, clearPersistedTask]);
 
   if (loading) {
     return (
