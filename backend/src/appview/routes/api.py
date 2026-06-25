@@ -121,8 +121,16 @@ def _refresh_org_session() -> dict:
     return _get_org_session()
 
 
+_records_cache: dict[str, tuple[float, list[dict]]] = {}
+_CACHE_TTL = 5  # seconds
+
+
 def _list_records(session: dict, collection: str) -> list[dict]:
-    """List records from the given session's DID."""
+    """List records from the given session's DID (cached for 5s)."""
+    now = time.time()
+    cached = _records_cache.get(collection)
+    if cached and (now - cached[0]) < _CACHE_TTL:
+        return cached[1]
 
     resp = httpx.get(
         f"{session['pds_issuer']}/xrpc/com.atproto.repo.listRecords",
@@ -146,7 +154,17 @@ def _list_records(session: dict, collection: str) -> list[dict]:
         uri = r.get("uri", "")
         rkey = uri.rsplit("/", 1)[-1] if "/" in uri else ""
         records.append({"uri": uri, "cid": r.get("cid", ""), "rkey": rkey, "value": r.get("value", {})})
+
+    _records_cache[collection] = (now, records)
     return records
+
+
+def _invalidate_cache(collection: str | None = None):
+    """Clear cache for a specific collection, or all if None."""
+    if collection:
+        _records_cache.pop(collection, None)
+    else:
+        _records_cache.clear()
 
 
 def _resolve_did_to_handle(pds_url: str, did: str) -> str:
@@ -199,6 +217,7 @@ def _create_record(session: dict, collection: str, record: dict, rkey: str | Non
         )
     if resp.status_code not in (200, 201):
         raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    _invalidate_cache(collection)
     return resp.json()
 
 
@@ -219,6 +238,7 @@ def _delete_record(session: dict, collection: str, rkey: str) -> None:
         )
     if resp.status_code not in (200, 201):
         raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    _invalidate_cache(collection)
 
 
 # ── Organization ─────────────────────────────────────────────────────────────

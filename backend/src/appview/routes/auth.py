@@ -223,6 +223,9 @@ def get_authenticated_session(request: Request) -> dict:
     return session
 
 
+_refresh_attempted: dict[str, float] = {}
+
+
 def _maybe_refresh(store: SessionStore, session_id: str, session: dict) -> dict:
     """Refresh the OAuth access token if it looks expired or missing."""
     refresh_token = session.get("refresh_token", "")
@@ -230,6 +233,8 @@ def _maybe_refresh(store: SessionStore, session_id: str, session: dict) -> dict:
         return session
 
     from datetime import datetime, timezone
+    import time as _time
+
     expires_at = session.get("expires_at", "")
     if expires_at:
         try:
@@ -240,8 +245,11 @@ def _maybe_refresh(store: SessionStore, session_id: str, session: dict) -> dict:
         except (ValueError, TypeError):
             pass
     else:
-        # No expiry recorded -- try refresh proactively
-        pass
+        # No expiry recorded -- only attempt refresh once per 10 minutes
+        last = _refresh_attempted.get(session_id, 0)
+        if _time.time() - last < 600:
+            return session
+        _refresh_attempted[session_id] = _time.time()
 
     try:
         private_jwk = json.loads(session["dpop_private_key"]) if isinstance(session["dpop_private_key"], str) else session["dpop_private_key"]
