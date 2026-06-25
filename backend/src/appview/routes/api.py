@@ -795,12 +795,19 @@ async def list_graph(request: Request):
     repo_deps = _list_records(session, "sh.tangled.governance.graph.repoDependency")
     code_deps = _list_records(session, "sh.tangled.governance.graph.codeDependency")
     service_deps = _list_records(session, "sh.tangled.governance.graph.serviceDependency")
+    profiles = _list_records(session, "sh.tangled.governance.compliance.repoProfile")
+
+    profile_map = {}
+    for p in profiles:
+        repo_uri = p["value"].get("repo", "")
+        profile_map[repo_uri] = p["value"]
 
     return {
         "repos": [{"id": r["rkey"], "uri": r["uri"], "name": r["rkey"], **r["value"]} for r in repos],
         "repoDependencies": [{"id": r["rkey"], "uri": r["uri"], **r["value"]} for r in repo_deps],
         "codeDependencies": [{"id": r["rkey"], "uri": r["uri"], **r["value"]} for r in code_deps],
         "serviceDependencies": [{"id": r["rkey"], "uri": r["uri"], **r["value"]} for r in service_deps],
+        "repoProfiles": profile_map,
     }
 
 
