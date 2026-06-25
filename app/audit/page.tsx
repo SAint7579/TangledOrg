@@ -15,27 +15,30 @@ import { Badge } from "@/components/ui/Badge";
 import { fetchAudit } from "@/lib/api";
 import { formatDateTime, formatRelativeTime, cn } from "@/lib/utils";
 
-type AuditType = "agent-run" | "evidence" | "waiver" | "all";
+type AuditType = "agent-run" | "evidence" | "waiver" | "incident" | "all";
 
 const typeIcons: Record<string, React.ElementType> = {
   "agent-run": Cpu,
   evidence: FileCheck,
   waiver: ShieldAlert,
+  incident: ShieldAlert,
 };
 
 const typeLabels: Record<string, string> = {
   "agent-run": "Agent Run",
   evidence: "Evidence",
   waiver: "Waiver",
+  incident: "Incident",
 };
 
 const typeColors: Record<string, string> = {
   "agent-run": "bg-blue-500/10 text-blue-400",
   evidence: "bg-green-500/10 text-green-400",
   waiver: "bg-amber-500/10 text-amber-400",
+  incident: "bg-red-500/10 text-red-400",
 };
 
-const allTypes: AuditType[] = ["agent-run", "evidence", "waiver"];
+const allTypes: AuditType[] = ["agent-run", "evidence", "waiver", "incident"];
 
 export default function AuditPage() {
   const [data, setData] = useState<any>(null);

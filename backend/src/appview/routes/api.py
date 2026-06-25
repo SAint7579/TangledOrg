@@ -527,6 +527,11 @@ async def list_policies(request: Request):
     packs = _list_records(session, "sh.tangled.governance.policy.policyPack")
     controls = _list_records(session, "sh.tangled.governance.policy.control")
     bindings = _list_records(session, "sh.tangled.governance.policy.repoBinding")
+    repos = _list_records(session, "sh.tangled.repo")
+
+    repo_uri_to_name: dict[str, str] = {}
+    for r in repos:
+        repo_uri_to_name[r["uri"]] = r["rkey"]
 
     policy_packs = []
     for p in packs:
@@ -537,10 +542,15 @@ async def list_policies(request: Request):
             {"id": c["rkey"], "uri": c["uri"], **c["value"]}
             for c in controls if c["value"].get("policyPack") == pack_uri
         ]
-        pack_bindings = [
-            {"id": b["rkey"], "uri": b["uri"], **b["value"]}
-            for b in bindings if b["value"].get("policyPack") == pack_uri
-        ]
+        pack_bindings = []
+        for b in bindings:
+            if b["value"].get("policyPack") == pack_uri:
+                repo_at_uri = b["value"].get("repo", "")
+                repo_name = repo_uri_to_name.get(repo_at_uri, repo_at_uri.rsplit("/", 1)[-1] if "/" in repo_at_uri else "")
+                pack_bindings.append({
+                    "id": b["rkey"], "uri": b["uri"], **b["value"],
+                    "repoSlug": repo_name,
+                })
 
         policy_packs.append({
             "id": p["rkey"], "uri": pack_uri,
@@ -885,14 +895,76 @@ async def list_audit(request: Request):
     agent_runs = _list_records(session, "sh.tangled.governance.audit.agentRun")
     evidence = _list_records(session, "sh.tangled.governance.audit.evidence")
     waivers = _list_records(session, "sh.tangled.governance.audit.waiver")
+    incidents = _list_records(session, "sh.tangled.governance.compliance.incident")
+
+    repos = _list_records(session, "sh.tangled.repo")
+    repo_uri_to_name: dict[str, str] = {}
+    for r in repos:
+        repo_uri_to_name[r["uri"]] = r["rkey"]
+
+    issues = _list_records(session, "sh.tangled.repo.issue")
+    issue_uri_to_title: dict[str, str] = {}
+    for iss in issues:
+        issue_uri_to_title[iss["uri"]] = iss["value"].get("title", "")
 
     entries = []
     for r in agent_runs:
-        entries.append({"id": r["rkey"], "type": "agent-run", "uri": r["uri"], **r["value"]})
+        v = r["value"]
+        repo_name = repo_uri_to_name.get(v.get("repo", ""), "")
+        entries.append({
+            "id": r["rkey"], "type": "agent-run", "uri": r["uri"],
+            "description": f"Agent run on {repo_name or 'repo'}: {v.get('status', 'unknown')}",
+            "targetLabel": repo_name,
+            "createdAt": v.get("startedAt", v.get("completedAt", "")),
+            "metadata": {
+                "status": v.get("status", ""),
+                "duration": f"{v.get('durationMs', 0)}ms" if v.get("durationMs") else None,
+                "records": v.get("recordsWritten"),
+            },
+            **v,
+        })
     for e in evidence:
-        entries.append({"id": e["rkey"], "type": "evidence", "uri": e["uri"], **e["value"]})
+        v = e["value"]
+        entries.append({
+            "id": e["rkey"], "type": "evidence", "uri": e["uri"],
+            "description": v.get("title", v.get("summary", "Evidence record")),
+            "targetLabel": v.get("evidenceType", ""),
+            "createdAt": v.get("createdAt", ""),
+            "metadata": {
+                "findings": v.get("findingsCount"),
+                "type": v.get("evidenceType", ""),
+            },
+            **v,
+        })
     for w in waivers:
-        entries.append({"id": w["rkey"], "type": "waiver", "uri": w["uri"], **w["value"]})
+        v = w["value"]
+        entries.append({
+            "id": w["rkey"], "type": "waiver", "uri": w["uri"],
+            "description": v.get("reason", "Waiver granted"),
+            "targetLabel": repo_uri_to_name.get(v.get("repo", ""), ""),
+            "createdAt": v.get("createdAt", ""),
+            "metadata": {
+                "status": v.get("status", ""),
+                "expires": v.get("expiresAt", ""),
+            },
+            **v,
+        })
+    for inc in incidents:
+        v = inc["value"]
+        repo_name = repo_uri_to_name.get(v.get("repo", ""), "")
+        issue_title = issue_uri_to_title.get(v.get("issue", ""), "")
+        entries.append({
+            "id": inc["rkey"], "type": "incident", "uri": inc["uri"],
+            "description": issue_title or v.get("description", "Compliance incident"),
+            "targetLabel": repo_name,
+            "createdAt": v.get("createdAt", ""),
+            "metadata": {
+                "severity": v.get("severity", ""),
+                "category": v.get("category", ""),
+                "status": v.get("status", ""),
+            },
+            **v,
+        })
 
     entries.sort(key=lambda x: x.get("createdAt", x.get("startedAt", "")), reverse=True)
     return {"entries": entries}
