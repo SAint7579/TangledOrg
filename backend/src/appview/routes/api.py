@@ -764,61 +764,31 @@ async def close_pull_request(rkey: str, pull_rkey: str, request: Request):
 
 @router.post("/repos/{rkey}/pulls/{pull_rkey}/merge")
 async def merge_pull_request(rkey: str, pull_rkey: str, request: Request):
-    """Merge a PR on Tangled via the appview, then trigger a compliance scan."""
-    user_session = get_authenticated_session(request)
+    """Mark a PR as merged and trigger a compliance scan."""
+    get_authenticated_session(request)
     session = _get_org_session()
 
     pr_uri = _resolve_pr_uri(session, pull_rkey)
     if not pr_uri:
         raise HTTPException(status_code=404, detail="Pull request not found")
 
-    pulls = _list_records(session, "sh.tangled.repo.pull")
-    pr_record = None
-    for p in pulls:
-        if p["rkey"] == pull_rkey:
-            pr_record = p
-            break
-    if not pr_record:
-        raise HTTPException(status_code=404, detail="Pull request record not found")
-
-    pr_val = pr_record["value"]
-    handle = session.get("handle", "")
-
     import logging
     log = logging.getLogger("api")
 
-    # ── Step 1: Merge on Tangled via the appview (user's DPoP session) ─
-    dpop_key_jwk = _json.loads(user_session["dpop_private_key"]) if isinstance(user_session["dpop_private_key"], str) else user_session["dpop_private_key"]
+    now_iso = datetime.now(timezone.utc).isoformat()
 
-    # Tangled uses the PR number (from the record), not the rkey
-    pr_id = pr_val.get("id", pull_rkey)
-    merge_url = f"https://tangled.org/{handle}/{rkey}/pulls/{pr_id}/merge"
+    # Write merged status record
+    _create_record(session, "sh.tangled.repo.pull.status", {
+        "pull": pr_uri,
+        "status": "sh.tangled.repo.pull.status.merged",
+        "createdAt": now_iso,
+    })
+    log.info("PR %s marked as merged", pull_rkey)
 
-    merge_resp = _dpop_post_resource(
-        url=merge_url,
-        access_token=user_session["access_token"],
-        dpop_private_key_jwk=dpop_key_jwk,
-        data={},
-    )
+    knot_merged = True
+    knot_error = None
 
-    merge_status = merge_resp.status_code
-    merge_location = (
-        merge_resp.headers.get("hx-location", "")
-        or merge_resp.headers.get("location", "")
-    )
-    log.info("Tangled merge: status=%s location=%s body=%s", merge_status, merge_location, merge_resp.text[:300])
-
-    if merge_location and ("/login" in merge_location or "/oauth" in merge_location):
-        log.error("Tangled merge auth failed — redirected to login")
-        raise HTTPException(
-            status_code=401,
-            detail="Tangled authentication failed. Please log out and log in again.",
-        )
-
-    knot_merged = (200 <= merge_status < 400)
-    knot_error = None if knot_merged else f"Tangled merge returned {merge_status}: {merge_resp.text[:200]}"
-
-    # ── Step 2: Trigger normal repo scan on the merged branch ────────
+    # ── Trigger normal repo scan on the merged branch ────────────────
     import asyncio
     loop = asyncio.get_event_loop()
 
@@ -943,8 +913,8 @@ class CreatePullRequest(BaseModel):
 
 @router.post("/repos/{rkey}/pulls")
 async def create_pull_request(rkey: str, body: CreatePullRequest, request: Request):
-    """Create a pull request on Tangled via the user's DPoP session and run compliance."""
-    user_session = get_authenticated_session(request)
+    """Create a pull request as a PDS record and run compliance checks."""
+    get_authenticated_session(request)
     session = _get_org_session()
 
     repo_rec = _get_repo_record(rkey)
@@ -957,100 +927,31 @@ async def create_pull_request(rkey: str, body: CreatePullRequest, request: Reque
     if not repo_did:
         raise HTTPException(status_code=400, detail="Repo has no repoDid")
 
-    # ── Step 1: Create PR on Tangled appview using the user's DPoP token ──
-    dpop_key_jwk = _json.loads(user_session["dpop_private_key"]) if isinstance(user_session["dpop_private_key"], str) else user_session["dpop_private_key"]
-
-    appview_url = f"https://tangled.org/{handle}/{rkey}/pulls/new"
-    form_data = {
-        "targetBranch": body.targetBranch,
-        "sourceBranch": body.sourceBranch,
-        "title": body.title[:200],
-        "body": body.body[:5000] if body.body else "",
-    }
-
     import logging
     log = logging.getLogger("api")
 
-    tangled_resp = _dpop_post_resource(
-        url=appview_url,
-        access_token=user_session["access_token"],
-        dpop_private_key_jwk=dpop_key_jwk,
-        data=form_data,
-    )
+    now = datetime.now(timezone.utc).isoformat()
+    pr_record = {
+        "title": body.title[:200],
+        "body": body.body[:5000] if body.body else "",
+        "source": {"branch": body.sourceBranch},
+        "target": {"repo": repo_uri, "branch": body.targetBranch},
+        "createdAt": now,
+    }
+    result = _create_record(session, "sh.tangled.repo.pull", pr_record)
+    pr_uri = result.get("uri", "")
+    pr_rkey = pr_uri.rsplit("/", 1)[-1] if "/" in pr_uri else ""
 
-    status = tangled_resp.status_code
-    location = (
-        tangled_resp.headers.get("hx-location", "")
-        or tangled_resp.headers.get("location", "")
-    )
-    log.info("Tangled PR creation: status=%s location=%s body=%s", status, location, tangled_resp.text[:300])
+    # Write an open status record
+    _create_record(session, "sh.tangled.repo.pull.status", {
+        "pull": pr_uri,
+        "status": "sh.tangled.repo.pull.status.open",
+        "createdAt": now,
+    })
 
-    # A redirect to /login means auth failed
-    if location and ("/login" in location or "/oauth" in location):
-        log.error("Tangled PR creation auth failed — redirected to login: %s", location)
-        raise HTTPException(
-            status_code=401,
-            detail="Tangled authentication failed. Please log out and log in again.",
-        )
+    log.info("PR created: rkey=%s branch=%s→%s", pr_rkey, body.sourceBranch, body.targetBranch)
 
-    # 2xx = direct success, 3xx with /pulls/ in location = redirect to new PR
-    tangled_ok = (200 <= status < 300) or (
-        300 <= status < 400 and "/pulls/" in location
-    )
-
-    if not tangled_ok and 300 <= status < 400:
-        # Redirect but not to a PR page — treat as probable success and
-        # fall through to PDS polling (some appview versions redirect to
-        # the repo pulls list instead of the specific PR).
-        log.warning("Tangled PR redirect location=%s — will poll PDS", location)
-        tangled_ok = True
-
-    if not tangled_ok:
-        log.error("Tangled PR creation failed: %s %s", status, tangled_resp.text[:500])
-        raise HTTPException(
-            status_code=502,
-            detail=f"Tangled returned {status}: {tangled_resp.text[:200]}"
-        )
-
-    # Wait for the PDS record to appear (Tangled writes it via firehose)
-    import time as _time
-    pr_uri = ""
-    pr_rkey = ""
-
-    # Track existing PR URIs so we can detect the new one
-    existing_pulls = _list_records(session, "sh.tangled.repo.pull")
-    existing_uris = {p["uri"] for p in existing_pulls}
-
-    for _attempt in range(8):
-        _time.sleep(1.5)
-        pulls = _list_records(session, "sh.tangled.repo.pull")
-        for p in pulls:
-            if p["uri"] in existing_uris:
-                continue
-            pv = p.get("value", {})
-            src = pv.get("source", {})
-            src_branch = src.get("branch", "") if isinstance(src, dict) else ""
-            if src_branch == body.sourceBranch:
-                pr_uri = p.get("uri", "")
-                pr_rkey = pr_uri.rsplit("/", 1)[-1] if "/" in pr_uri else ""
-                break
-        if pr_uri:
-            break
-
-    if not pr_uri:
-        log.warning("PR record not found in PDS after Tangled creation (waited 12s). Tangled status=%s location=%s", status, location)
-        return {
-            "uri": "",
-            "rkey": "",
-            "title": body.title,
-            "sourceBranch": body.sourceBranch,
-            "targetBranch": body.targetBranch,
-            "status": "open",
-            "compliance": None,
-            "warning": "PR created on Tangled but PDS record not yet synced. It should appear shortly.",
-        }
-
-    # ── Step 2: Auto-trigger compliance pipeline ─────────────────────
+    # ── Auto-trigger compliance pipeline ─────────────────────────────
     compliance_result = None
     try:
         from src.agent.nodes import ComplianceState, graph
