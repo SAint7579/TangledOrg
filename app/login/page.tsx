@@ -1,12 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import { Shield } from "lucide-react";
+import Image from "next/image";
 import { getLoginUrl } from "@/lib/api";
+import { useTheme } from "@/components/theme/ThemeProvider";
 
 export default function LoginPage() {
   const [handle, setHandle] = useState("");
   const [error, setError] = useState("");
+  const { theme } = useTheme();
+  const logoSrc = theme === "dark" ? "/hsb-logo-light.png" : "/hsb-logo-dark.png";
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -27,14 +30,15 @@ export default function LoginPage() {
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="text-center mb-10">
-          <div className="flex items-center justify-center gap-2.5 mb-3">
-            <Shield size={22} className="text-[#a5b4fc]" strokeWidth={2} />
-            <span
-              className="text-xl font-semibold tracking-tight"
-              style={{ color: "var(--text-primary)" }}
-            >
-              HSB
-            </span>
+          <div className="flex justify-center mb-4">
+            <Image
+              src={logoSrc}
+              alt="HSB"
+              width={220}
+              height={70}
+              className="h-14 w-auto"
+              priority
+            />
           </div>
           <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
             Sign in with your AT Protocol identity
