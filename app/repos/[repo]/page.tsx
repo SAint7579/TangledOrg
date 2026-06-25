@@ -527,8 +527,18 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
                             <>
                               <div className="flex items-center gap-2">
                                 <CheckCircle2 size={12} className="text-green-400" />
-                                <span className="text-xs text-green-300">PR created: {createPRResult.title}</span>
+                                <span className="text-xs text-green-300">Governance PR created: {createPRResult.title}</span>
                               </div>
+                              {createPRResult.tangledUrl && (
+                                <a
+                                  href={createPRResult.tangledUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1.5 text-[10px] text-blue-400 hover:text-blue-300 underline"
+                                >
+                                  Also create this PR on Tangled &rarr;
+                                </a>
+                              )}
                               {createPRResult.compliance && (
                                 <div className="space-y-2 pl-5">
                                   <div className="flex items-center gap-2">

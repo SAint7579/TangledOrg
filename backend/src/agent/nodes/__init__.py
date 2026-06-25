@@ -132,29 +132,41 @@ class ComplianceState:
 
 
 def clone_diff(state: ComplianceState) -> ComplianceState:
-    """Clone the repo and compute the diff between PR branch and base."""
+    """Clone the repo and compute the diff between PR branch and base.
+
+    If repo_clone_url uses a DID-based path that fails, falls back to
+    fetching file trees from the knot XRPC API to build the diff.
+    """
+    import logging
+    log = logging.getLogger("clone_diff")
+
+    clone_url = state.repo_clone_url
+    log.info("clone_diff: url=%s branch=%s base=%s", clone_url, state.pr_branch, state.base_branch)
+
     try:
         clone_dir = tempfile.mkdtemp(prefix="tangled_org_")
         state.clone_dir = clone_dir
 
-        # Shallow clone
-        subprocess.run(
-            ["git", "clone", "--depth", "50", state.repo_clone_url, clone_dir],
-            check=True,
+        clone_result = subprocess.run(
+            ["git", "clone", "--depth", "50", clone_url, clone_dir],
             capture_output=True,
             timeout=120,
         )
+        if clone_result.returncode != 0:
+            stderr = clone_result.stderr.decode(errors="replace")[:300]
+            log.warning("git clone failed (rc=%d): %s", clone_result.returncode, stderr)
+            # Fall back to XRPC-based diff
+            return _xrpc_diff_fallback(state)
 
-        # Fetch the PR branch explicitly (may not be in shallow clone)
-        subprocess.run(
+        fetch_result = subprocess.run(
             ["git", "fetch", "origin", f"{state.pr_branch}:{state.pr_branch}"],
-            check=False,  # best-effort; branch may already be present
             capture_output=True,
             timeout=30,
             cwd=clone_dir,
         )
+        if fetch_result.returncode != 0:
+            log.warning("fetch branch failed: %s", fetch_result.stderr.decode(errors="replace")[:200])
 
-        # Compute diff
         diff_result = subprocess.run(
             ["git", "diff", f"{state.base_branch}...{state.pr_branch}"],
             check=True,
@@ -163,9 +175,8 @@ def clone_diff(state: ComplianceState) -> ComplianceState:
             timeout=30,
             cwd=clone_dir,
         )
-        state.diff_text = diff_result.stdout[:50_000]  # cap at 50k chars
+        state.diff_text = diff_result.stdout[:50_000]
 
-        # Collect changed file list
         files_result = subprocess.run(
             ["git", "diff", "--name-only", f"{state.base_branch}...{state.pr_branch}"],
             check=True,
@@ -176,16 +187,149 @@ def clone_diff(state: ComplianceState) -> ComplianceState:
         )
         state.changed_files = [f for f in files_result.stdout.strip().split("\n") if f]
 
+        if not state.changed_files:
+            log.warning("git diff returned 0 files — trying XRPC fallback")
+            return _xrpc_diff_fallback(state)
+
     except FileNotFoundError:
-        # git not installed — proceed without diff (advisory mode)
-        state.diff_text = ""
-        state.changed_files = []
+        log.warning("git binary not found — using XRPC fallback")
+        return _xrpc_diff_fallback(state)
     except subprocess.TimeoutExpired as exc:
         state.error = f"clone_diff timed out: {exc}"
     except subprocess.CalledProcessError as exc:
         state.error = f"clone_diff git error: {exc.stderr.decode(errors='replace')[:500]}"
+        return _xrpc_diff_fallback(state)
     except Exception as exc:  # noqa: BLE001
         state.error = f"clone_diff unexpected error: {exc}"
+        return _xrpc_diff_fallback(state)
+
+    return state
+
+
+def _xrpc_diff_fallback(state: ComplianceState) -> ComplianceState:
+    """Build a diff by comparing file trees from the knot XRPC API.
+
+    When git clone isn't possible, fetches the tree for both branches
+    and computes a text diff from the file contents.
+    """
+    import logging
+    import httpx as _httpx
+    log = logging.getLogger("clone_diff")
+
+    repo_uri = state.repo_uri
+    rkey = repo_uri.rsplit("/", 1)[-1] if "/" in repo_uri else ""
+    if not rkey:
+        state.error = "XRPC fallback: cannot resolve repo rkey"
+        return state
+
+    try:
+        from src.appview.routes.api import _get_repo_record, _get_org_session
+        repo_rec = _get_repo_record(rkey)
+        val = repo_rec["value"]
+        knot = val.get("knot", "")
+        owner_did = _get_org_session()["did"]
+    except Exception as exc:
+        state.error = f"XRPC fallback: cannot resolve repo/knot: {exc}"
+        return state
+
+    if not knot:
+        state.error = "XRPC fallback: no knot server"
+        return state
+
+    repo_param = f"{owner_did}/{rkey}"
+    log.info("XRPC fallback: knot=%s repo=%s base=%s head=%s", knot, repo_param, state.base_branch, state.pr_branch)
+
+    def _get_tree(ref: str, path: str = "") -> list[dict]:
+        """Recursively fetch file tree from the knot server."""
+        params: dict = {"repo": repo_param, "ref": ref}
+        if path:
+            params["path"] = path
+        resp = _httpx.get(
+            f"https://{knot}/xrpc/sh.tangled.repo.tree",
+            params=params,
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+        entries = data.get("files", data.get("entries", data.get("tree", [])))
+        result = []
+        for entry in entries:
+            name = entry.get("name", entry.get("path", ""))
+            mode = entry.get("mode", "")
+            full_path = f"{path}/{name}" if path else name
+            if mode.startswith("004"):
+                result.extend(_get_tree(ref, full_path))
+            else:
+                entry["_full_path"] = full_path
+                result.append(entry)
+        return result
+
+    def _get_blob(ref: str, path: str) -> str:
+        resp = _httpx.get(
+            f"https://{knot}/xrpc/sh.tangled.repo.blob",
+            params={"repo": repo_param, "ref": ref, "path": path},
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            return ""
+        data = resp.json()
+        return data.get("content", data.get("data", ""))
+
+    try:
+        base_files = _get_tree(state.base_branch)
+        head_files = _get_tree(state.pr_branch)
+
+        base_names = {f.get("_full_path", f.get("name", "")): f for f in base_files}
+        head_names = {f.get("_full_path", f.get("name", "")): f for f in head_files}
+
+        all_files = set(base_names.keys()) | set(head_names.keys())
+        changed = []
+        diff_parts = []
+
+        for fname in sorted(all_files):
+            in_base = fname in base_names
+            in_head = fname in head_names
+
+            if in_base and in_head:
+                base_size = base_names[fname].get("size", -1)
+                head_size = head_names[fname].get("size", -2)
+                base_hash = base_names[fname].get("hash", "")
+                head_hash = head_names[fname].get("hash", "")
+                if base_hash and head_hash and base_hash == head_hash:
+                    continue
+                if base_size == head_size and not base_hash:
+                    base_c = _get_blob(state.base_branch, fname)
+                    head_c = _get_blob(state.pr_branch, fname)
+                    if base_c == head_c:
+                        continue
+
+            changed.append(fname)
+
+            base_content = _get_blob(state.base_branch, fname) if in_base else ""
+            head_content = _get_blob(state.pr_branch, fname) if in_head else ""
+
+            if not in_base:
+                diff_parts.append(f"--- /dev/null\n+++ b/{fname}\n" +
+                                  "\n".join(f"+{line}" for line in head_content.splitlines()[:200]))
+            elif not in_head:
+                diff_parts.append(f"--- a/{fname}\n+++ /dev/null\n" +
+                                  "\n".join(f"-{line}" for line in base_content.splitlines()[:200]))
+            else:
+                import difflib
+                base_lines = base_content.splitlines(keepends=True)
+                head_lines = head_content.splitlines(keepends=True)
+                udiff = difflib.unified_diff(base_lines, head_lines,
+                                             fromfile=f"a/{fname}", tofile=f"b/{fname}")
+                diff_parts.append("".join(udiff)[:5000])
+
+        state.changed_files = changed
+        state.diff_text = "\n".join(diff_parts)[:50_000]
+        log.info("XRPC fallback: found %d changed files", len(changed))
+
+    except Exception as exc:
+        state.error = f"XRPC fallback error: {exc}"
+        log.exception("XRPC fallback failed")
 
     return state
 

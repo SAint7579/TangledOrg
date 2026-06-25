@@ -728,6 +728,12 @@ async def create_pull_request(rkey: str, body: CreatePullRequest, request: Reque
     except Exception as exc:
         compliance_result = {"error": str(exc)}
 
+    handle = session.get("handle", "")
+    tangled_pr_url = (
+        f"https://tangled.org/{handle}/{rkey}/pulls/new"
+        f"?source=branch&sourceBranch={body.sourceBranch}&targetBranch={body.targetBranch}"
+    ) if handle else None
+
     return {
         "uri": pr_uri,
         "rkey": pr_rkey,
@@ -736,6 +742,7 @@ async def create_pull_request(rkey: str, body: CreatePullRequest, request: Reque
         "targetBranch": body.targetBranch,
         "status": "open",
         "compliance": compliance_result,
+        "tangledUrl": tangled_pr_url,
     }
 
 
