@@ -189,7 +189,7 @@ def _refresh_org_session() -> dict:
 
 
 _records_cache: dict[str, tuple[float, list[dict]]] = {}
-_CACHE_TTL = 5  # seconds
+_CACHE_TTL = 15  # seconds — writes invalidate via _invalidate_cache
 
 
 def _list_records(session: dict, collection: str) -> list[dict]:
@@ -232,6 +232,38 @@ def _invalidate_cache(collection: str | None = None):
         _records_cache.pop(collection, None)
     else:
         _records_cache.clear()
+
+
+async def _list_records_many(session: dict, collections: list[str]) -> dict[str, list[dict]]:
+    """Fetch multiple collections in parallel using a thread pool.
+
+    Returns a dict mapping collection name → list of records.
+    Cache-hot collections are returned immediately; only cache-misses
+    go out as concurrent HTTP calls.
+    """
+    import asyncio
+
+    results: dict[str, list[dict]] = {}
+    to_fetch: list[str] = []
+
+    now = time.time()
+    for col in collections:
+        cached = _records_cache.get(col)
+        if cached and (now - cached[0]) < _CACHE_TTL:
+            results[col] = cached[1]
+        else:
+            to_fetch.append(col)
+
+    if not to_fetch:
+        return results
+
+    loop = asyncio.get_event_loop()
+    futures = [loop.run_in_executor(None, _list_records, session, col) for col in to_fetch]
+    fetched = await asyncio.gather(*futures)
+    for col, records in zip(to_fetch, fetched):
+        results[col] = records
+
+    return results
 
 
 def _resolve_did_to_handle(pds_url: str, did: str) -> str:
@@ -317,14 +349,25 @@ async def get_dashboard(request: Request):
     get_authenticated_session(request)
     session = _get_org_session()
 
-    repos = _list_records(session, "sh.tangled.repo")
-    pulls = _list_records(session, "sh.tangled.repo.pull")
-    pull_statuses = _list_records(session, "sh.tangled.repo.pull.status")
-    incidents = _list_records(session, "sh.tangled.governance.compliance.incident")
-    policies = _list_records(session, "sh.tangled.governance.policyPack")
-    scans = _list_records(session, "sh.tangled.governance.compliance.scanResult")
-    repo_deps = _list_records(session, "sh.tangled.governance.graph.repoDependency")
-    code_deps = _list_records(session, "sh.tangled.governance.graph.codeDependency")
+    all_data = await _list_records_many(session, [
+        "sh.tangled.repo",
+        "sh.tangled.repo.pull",
+        "sh.tangled.repo.pull.status",
+        "sh.tangled.governance.compliance.incident",
+        "sh.tangled.governance.policyPack",
+        "sh.tangled.governance.compliance.scanResult",
+        "sh.tangled.governance.graph.repoDependency",
+        "sh.tangled.governance.graph.codeDependency",
+    ])
+
+    repos = all_data["sh.tangled.repo"]
+    pulls = all_data["sh.tangled.repo.pull"]
+    pull_statuses = all_data["sh.tangled.repo.pull.status"]
+    incidents = all_data["sh.tangled.governance.compliance.incident"]
+    policies = all_data["sh.tangled.governance.policyPack"]
+    scans = all_data["sh.tangled.governance.compliance.scanResult"]
+    repo_deps = all_data["sh.tangled.governance.graph.repoDependency"]
+    code_deps = all_data["sh.tangled.governance.graph.codeDependency"]
 
     # Build pull status map
     status_map: dict[str, str] = {}
@@ -541,8 +584,12 @@ async def add_member(body: AddMemberRequest, request: Request):
 async def list_repos(request: Request):
     get_authenticated_session(request)  # auth check
     session = _get_org_session()
-    repos = _list_records(session, "sh.tangled.repo")
-    profiles = _list_records(session, "sh.tangled.governance.compliance.repoProfile")
+    all_data = await _list_records_many(session, [
+        "sh.tangled.repo",
+        "sh.tangled.governance.compliance.repoProfile",
+    ])
+    repos = all_data["sh.tangled.repo"]
+    profiles = all_data["sh.tangled.governance.compliance.repoProfile"]
 
     profile_map = {}
     for p in profiles:
@@ -592,8 +639,12 @@ async def list_repo_issues(rkey: str, request: Request):
     repo_rec = _get_repo_record(rkey)
     repo_did = repo_rec["value"].get("repoDid", "")
 
-    issues = _list_records(session, "sh.tangled.repo.issue")
-    states = _list_records(session, "sh.tangled.repo.issue.state")
+    all_data = await _list_records_many(session, [
+        "sh.tangled.repo.issue",
+        "sh.tangled.repo.issue.state",
+    ])
+    issues = all_data["sh.tangled.repo.issue"]
+    states = all_data["sh.tangled.repo.issue.state"]
 
     state_map: dict[str, str] = {}
     for s in states:
@@ -635,8 +686,12 @@ async def list_repo_pulls(rkey: str, request: Request):
     repo_rec = _get_repo_record(rkey)
     repo_did = repo_rec["value"].get("repoDid", "")
 
-    pulls = _list_records(session, "sh.tangled.repo.pull")
-    statuses = _list_records(session, "sh.tangled.repo.pull.status")
+    all_data = await _list_records_many(session, [
+        "sh.tangled.repo.pull",
+        "sh.tangled.repo.pull.status",
+    ])
+    pulls = all_data["sh.tangled.repo.pull"]
+    statuses = all_data["sh.tangled.repo.pull.status"]
 
     status_map: dict[str, str] = {}
     for s in statuses:
@@ -1128,10 +1183,16 @@ async def create_repo_profile(rkey: str, body: RepoProfileCreate, request: Reque
 async def list_policies(request: Request):
     get_authenticated_session(request)  # auth check
     session = _get_org_session()
-    packs = _list_records(session, "sh.tangled.governance.policy.policyPack")
-    controls = _list_records(session, "sh.tangled.governance.policy.control")
-    bindings = _list_records(session, "sh.tangled.governance.policy.repoBinding")
-    repos = _list_records(session, "sh.tangled.repo")
+    all_data = await _list_records_many(session, [
+        "sh.tangled.governance.policy.policyPack",
+        "sh.tangled.governance.policy.control",
+        "sh.tangled.governance.policy.repoBinding",
+        "sh.tangled.repo",
+    ])
+    packs = all_data["sh.tangled.governance.policy.policyPack"]
+    controls = all_data["sh.tangled.governance.policy.control"]
+    bindings = all_data["sh.tangled.governance.policy.repoBinding"]
+    repos = all_data["sh.tangled.repo"]
 
     repo_uri_to_name: dict[str, str] = {}
     for r in repos:
@@ -1251,11 +1312,22 @@ async def create_policy_binding(body: PolicyBindingCreate, request: Request):
 async def list_incidents(request: Request):
     get_authenticated_session(request)  # auth check
     session = _get_org_session()
-    incidents = _list_records(session, "sh.tangled.governance.compliance.incident")
-    sla_trackers = _list_records(session, "sh.tangled.governance.compliance.slaTracker")
 
-    # Resolve linked issues (include createdBy DID for assignee resolution)
-    issues = _list_records(session, "sh.tangled.repo.issue")
+    all_data = await _list_records_many(session, [
+        "sh.tangled.governance.compliance.incident",
+        "sh.tangled.governance.compliance.slaTracker",
+        "sh.tangled.repo.issue",
+        "sh.tangled.repo",
+        "sh.tangled.governance.org.membership",
+        "sh.tangled.governance.org.role",
+    ])
+
+    incidents = all_data["sh.tangled.governance.compliance.incident"]
+    sla_trackers = all_data["sh.tangled.governance.compliance.slaTracker"]
+    issues = all_data["sh.tangled.repo.issue"]
+    repos = all_data["sh.tangled.repo"]
+    memberships = all_data["sh.tangled.governance.org.membership"]
+
     issue_map: dict[str, dict] = {}
     for iss in issues:
         issue_map[iss["uri"]] = {
@@ -1266,8 +1338,6 @@ async def list_incidents(request: Request):
             "createdBy": iss["value"].get("createdBy", ""),
         }
 
-    # Resolve repo names
-    repos = _list_records(session, "sh.tangled.repo")
     repo_uri_to_name: dict[str, str] = {}
     for r in repos:
         repo_uri_to_name[r["uri"]] = r["rkey"]
@@ -1276,23 +1346,18 @@ async def list_incidents(request: Request):
     for s in sla_trackers:
         sla_map[s["value"].get("incident", "")] = s["value"]
 
-    # Build DID→handle map from membership records for assignee resolution.
-    # Always seed with the org-owner session so AI-generated incidents get assigned.
     org_owner_did    = session.get("did", "")
     org_owner_handle = session.get("handle", "")
 
-    memberships = _list_records(session, "sh.tangled.governance.org.membership")
     member_dids = list({m["value"].get("memberDid", "") for m in memberships if m["value"].get("memberDid")})
     did_to_handle: dict[str, str] = {}
     if member_dids:
         did_to_handle = _resolve_dids_batch(session["pds_issuer"], member_dids)
 
-    # Seed with org owner so their DID always resolves
     if org_owner_did and org_owner_handle:
         did_to_handle.setdefault(org_owner_did, org_owner_handle)
 
-    # Find the best member-role owner as secondary fallback
-    roles = _list_records(session, "sh.tangled.governance.org.role")
+    roles = all_data["sh.tangled.governance.org.role"]
     role_map = {r["uri"]: r["value"] for r in roles}
     role_owner_handle: str = ""
     for m in memberships:
@@ -1600,18 +1665,29 @@ async def create_incident(body: IncidentCreate, request: Request):
 async def list_audit(request: Request):
     get_authenticated_session(request)  # auth check
     session = _get_org_session()
-    agent_runs = _list_records(session, "sh.tangled.governance.audit.agentRun")
-    evidence = _list_records(session, "sh.tangled.governance.audit.evidence")
-    waivers = _list_records(session, "sh.tangled.governance.audit.waiver")
-    incidents = _list_records(session, "sh.tangled.governance.compliance.incident")
-    scan_records = _list_records(session, "sh.tangled.governance.compliance.scanResult")
 
-    repos = _list_records(session, "sh.tangled.repo")
+    all_data = await _list_records_many(session, [
+        "sh.tangled.governance.audit.agentRun",
+        "sh.tangled.governance.audit.evidence",
+        "sh.tangled.governance.audit.waiver",
+        "sh.tangled.governance.compliance.incident",
+        "sh.tangled.governance.compliance.scanResult",
+        "sh.tangled.repo",
+        "sh.tangled.repo.issue",
+    ])
+
+    agent_runs = all_data["sh.tangled.governance.audit.agentRun"]
+    evidence = all_data["sh.tangled.governance.audit.evidence"]
+    waivers = all_data["sh.tangled.governance.audit.waiver"]
+    incidents = all_data["sh.tangled.governance.compliance.incident"]
+    scan_records = all_data["sh.tangled.governance.compliance.scanResult"]
+    repos = all_data["sh.tangled.repo"]
+    issues = all_data["sh.tangled.repo.issue"]
+
     repo_uri_to_name: dict[str, str] = {}
     for r in repos:
         repo_uri_to_name[r["uri"]] = r["rkey"]
 
-    issues = _list_records(session, "sh.tangled.repo.issue")
     issue_uri_to_title: dict[str, str] = {}
     for iss in issues:
         issue_uri_to_title[iss["uri"]] = iss["value"].get("title", "")
@@ -1710,11 +1786,18 @@ async def list_audit(request: Request):
 async def list_graph(request: Request):
     get_authenticated_session(request)  # auth check
     session = _get_org_session()
-    repos = _list_records(session, "sh.tangled.repo")
-    repo_deps = _list_records(session, "sh.tangled.governance.graph.repoDependency")
-    code_deps = _list_records(session, "sh.tangled.governance.graph.codeDependency")
-    service_deps = _list_records(session, "sh.tangled.governance.graph.serviceDependency")
-    profiles = _list_records(session, "sh.tangled.governance.compliance.repoProfile")
+    all_data = await _list_records_many(session, [
+        "sh.tangled.repo",
+        "sh.tangled.governance.graph.repoDependency",
+        "sh.tangled.governance.graph.codeDependency",
+        "sh.tangled.governance.graph.serviceDependency",
+        "sh.tangled.governance.compliance.repoProfile",
+    ])
+    repos = all_data["sh.tangled.repo"]
+    repo_deps = all_data["sh.tangled.governance.graph.repoDependency"]
+    code_deps = all_data["sh.tangled.governance.graph.codeDependency"]
+    service_deps = all_data["sh.tangled.governance.graph.serviceDependency"]
+    profiles = all_data["sh.tangled.governance.compliance.repoProfile"]
 
     profile_map = {}
     for p in profiles:
