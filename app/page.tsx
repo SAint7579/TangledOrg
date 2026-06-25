@@ -274,7 +274,7 @@ export default function DashboardPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-zinc-800 bg-zinc-900/60">
-                    {["", "Severity", "Repo", "Description", "Status"].map((h) => (
+                    {["", "Severity", "Repo", "Description", "Assigned To", "Status"].map((h) => (
                       <th key={h} className="text-left px-3 py-2 text-[10px] font-semibold text-zinc-600 uppercase tracking-[0.12em]">
                         {h}
                       </th>
@@ -301,6 +301,15 @@ export default function DashboardPage() {
                         <p className="text-xs text-zinc-300 line-clamp-1">
                           {inc.linkedIssue?.title || inc.description || inc.title || "—"}
                         </p>
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {inc.assignedTo ? (
+                          <span className="font-mono text-[11px] text-zinc-400">
+                            {inc.assignedTo.split(".")[0]}
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-zinc-700">—</span>
+                        )}
                       </td>
                       <td className="px-3 py-2">
                         <Badge

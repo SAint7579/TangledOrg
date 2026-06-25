@@ -1244,7 +1244,7 @@ async def list_incidents(request: Request):
     incidents = _list_records(session, "sh.tangled.governance.compliance.incident")
     sla_trackers = _list_records(session, "sh.tangled.governance.compliance.slaTracker")
 
-    # Resolve linked issues
+    # Resolve linked issues (include createdBy DID for assignee resolution)
     issues = _list_records(session, "sh.tangled.repo.issue")
     issue_map: dict[str, dict] = {}
     for iss in issues:
@@ -1253,6 +1253,7 @@ async def list_incidents(request: Request):
             "title": iss["value"].get("title", ""),
             "body": iss["value"].get("body", ""),
             "createdAt": iss["value"].get("createdAt", ""),
+            "createdBy": iss["value"].get("createdBy", ""),
         }
 
     # Resolve repo names
@@ -1265,16 +1266,42 @@ async def list_incidents(request: Request):
     for s in sla_trackers:
         sla_map[s["value"].get("incident", "")] = s["value"]
 
+    # Build DID→handle map from membership records for assignee resolution
+    memberships = _list_records(session, "sh.tangled.governance.org.membership")
+    member_dids = list({m["value"].get("memberDid", "") for m in memberships if m["value"].get("memberDid")})
+    did_to_handle: dict[str, str] = {}
+    if member_dids:
+        did_to_handle = _resolve_dids_batch(session["pds_issuer"], member_dids)
+
+    # Find the default org-owner handle as fallback assignee
+    roles = _list_records(session, "sh.tangled.governance.org.role")
+    role_map = {r["uri"]: r["value"] for r in roles}
+    owner_handle: str = ""
+    for m in memberships:
+        val_m = m["value"]
+        role_data = role_map.get(val_m.get("role", ""), {})
+        if role_data.get("slug", "") in ("owner", "admin"):
+            did = val_m.get("memberDid", "")
+            owner_handle = did_to_handle.get(did, did)
+            break
+
     result = []
     for inc in incidents:
         val = inc["value"]
         issue_uri = val.get("issue", "")
         repo_uri = val.get("repo", "")
+        linked_issue = issue_map.get(issue_uri)
+
+        # Resolve assignee: prefer issue creator → org owner fallback
+        created_by_did = (linked_issue or {}).get("createdBy", "") or val.get("createdBy", "")
+        assignee_handle = did_to_handle.get(created_by_did, "") or owner_handle
+
         result.append({
             "id": inc["rkey"], "uri": inc["uri"], **val,
             "sla": sla_map.get(inc["uri"]),
-            "linkedIssue": issue_map.get(issue_uri),
+            "linkedIssue": linked_issue,
             "repoName": repo_uri_to_name.get(repo_uri, ""),
+            "assignedTo": assignee_handle,
         })
     return {"incidents": result}
 

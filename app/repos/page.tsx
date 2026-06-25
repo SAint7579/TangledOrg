@@ -1,36 +1,52 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
-import { Shield } from "lucide-react";
+import { Shield, ScanLine, CheckCircle2, Clock } from "lucide-react";
 import { Shell } from "@/components/layout/Shell";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
-import { fetchRepos } from "@/lib/api";
-
+import { fetchRepos, fetchDashboard, runScan } from "@/lib/api";
 
 export default function ReposPage() {
-  const [data, setData] = useState<any>(null);
+  const [repos, setRepos] = useState<any[]>([]);
+  const [scanCounts, setScanCounts] = useState<Record<string, number>>({});
+  const [scanning, setScanning] = useState<Record<string, boolean>>({});
+  const [scanDone, setScanDone] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetchRepos().then((res) => {
-      setData(res);
-      setLoading(false);
-    });
+  const load = useCallback(async () => {
+    const [reposRes, dashRes] = await Promise.all([fetchRepos(), fetchDashboard()]);
+    setRepos(reposRes?.repos ?? []);
+    // Build rkey → scanCount map from dashboard stats
+    const counts: Record<string, number> = {};
+    for (const stat of dashRes?.repoStats ?? []) {
+      counts[stat.rkey] = stat.scanCount;
+    }
+    setScanCounts(counts);
+    setLoading(false);
   }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleScan = async (e: React.MouseEvent, repoRkey: string) => {
+    e.preventDefault(); // don't navigate into the repo
+    setScanning(p => ({ ...p, [repoRkey]: true }));
+    await runScan(repoRkey);
+    setScanning(p => ({ ...p, [repoRkey]: false }));
+    setScanDone(p => ({ ...p, [repoRkey]: true }));
+    setScanCounts(p => ({ ...p, [repoRkey]: (p[repoRkey] ?? 0) + 1 }));
+  };
 
   if (loading) {
     return (
       <Shell breadcrumbs={[{ label: "Repos" }]}>
         <div className="flex items-center justify-center h-64">
-          <span className="text-zinc-500 text-sm animate-pulse">Loading...</span>
+          <span className="text-sm animate-pulse" style={{ color: "var(--text-muted)" }}>Loading…</span>
         </div>
       </Shell>
     );
   }
-
-  const repos = data?.repos ?? [];
 
   return (
     <Shell breadcrumbs={[{ label: "Repos" }]}>
@@ -44,19 +60,26 @@ export default function ReposPage() {
 
         <div className="space-y-2">
           {repos.map((repo: any, idx: number) => {
-            const classification =
-              repo.profile?.dataClassification ?? repo.dataClassification;
-            const regulations =
-              repo.profile?.applicableRegulations ?? repo.regulations ?? [];
+            const rkey = repo.name ?? repo.slug ?? repo.id;
+            const classification = repo.profile?.dataClassification ?? repo.dataClassification;
+            const regulations = repo.profile?.applicableRegulations ?? repo.regulations ?? [];
+            const scans = scanCounts[rkey] ?? 0;
+            const isScanning = scanning[rkey] ?? false;
+            const justScanned = scanDone[rkey] ?? false;
+
             return (
               <Card key={repo.id ?? idx} padding={false}>
-                <Link
-                  href={`/repos/${repo.name ?? repo.slug}`}
-                  className="flex items-start gap-4 p-4 hover:bg-zinc-800/20 transition-colors group rounded-lg"
-                >
-                  <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-4 p-4">
+                  {/* Left: repo info — clicking navigates */}
+                  <Link
+                    href={`/repos/${rkey}`}
+                    className="flex-1 min-w-0 group"
+                  >
                     <div className="flex items-center gap-2.5 mb-1 flex-wrap">
-                      <span className="text-base font-semibold text-zinc-100 group-hover:text-white font-mono">
+                      <span
+                        className="text-base font-semibold font-mono group-hover:opacity-80 transition-opacity"
+                        style={{ color: "var(--text-primary)" }}
+                      >
                         {repo.name}
                       </span>
                       {classification && (
@@ -65,24 +88,26 @@ export default function ReposPage() {
                         </Badge>
                       )}
                     </div>
-                    <div className="flex items-center gap-4 text-xs text-zinc-500 flex-wrap mt-2">
+                    <div className="flex items-center gap-4 text-xs flex-wrap mt-1" style={{ color: "var(--text-muted)" }}>
                       {repo.knot && (
                         <span className="flex items-center gap-1">
-                          <Shield size={11} className="text-zinc-600" />
+                          <Shield size={11} />
                           {repo.knot}
                         </span>
                       )}
                       {repo.repoDid && (
-                        <span className="font-mono text-[10px] text-zinc-600">
-                          {repo.repoDid.substring(0, 24)}...
+                        <span className="font-mono text-[10px]">
+                          {repo.repoDid.substring(0, 24)}…
                         </span>
                       )}
                     </div>
-                  </div>
+                  </Link>
 
-                  <div className="flex-shrink-0 flex flex-col items-end gap-2">
+                  {/* Right: regulations + scan status + scan button */}
+                  <div className="flex-shrink-0 flex items-center gap-3">
+                    {/* Regulations */}
                     {regulations.length > 0 && (
-                      <div className="flex flex-wrap gap-1 justify-end max-w-[200px]">
+                      <div className="flex flex-wrap gap-1 justify-end max-w-[180px]">
                         {regulations.map((reg: string) => (
                           <span
                             key={reg}
@@ -98,16 +123,56 @@ export default function ReposPage() {
                         ))}
                       </div>
                     )}
+
+                    {/* Scan status indicator */}
+                    <div className="flex items-center gap-1.5 text-[10px]" style={{ color: "var(--text-muted)" }}>
+                      {justScanned ? (
+                        <>
+                          <CheckCircle2 size={12} style={{ color: "#86efac" }} />
+                          <span style={{ color: "#86efac" }}>Scanned</span>
+                        </>
+                      ) : scans > 0 ? (
+                        <>
+                          <CheckCircle2 size={12} style={{ color: "#86efac" }} />
+                          <span>{scans} scan{scans !== 1 ? "s" : ""}</span>
+                        </>
+                      ) : (
+                        <>
+                          <Clock size={12} style={{ color: "#fde68a" }} />
+                          <span style={{ color: "#fde68a" }}>Never scanned</span>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Scan button */}
+                    <button
+                      onClick={(e) => handleScan(e, rkey)}
+                      disabled={isScanning}
+                      className="flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1.5 rounded border transition-all disabled:opacity-50"
+                      style={{
+                        backgroundColor: isScanning ? "var(--hover-bg)" : "transparent",
+                        borderColor: "var(--border-subtle)",
+                        color: isScanning ? "var(--text-muted)" : "var(--text-secondary)",
+                      }}
+                      title="Run AI compliance scan"
+                    >
+                      <ScanLine
+                        size={12}
+                        className={isScanning ? "animate-pulse" : ""}
+                        style={{ color: "#a5b4fc" }}
+                      />
+                      {isScanning ? "Scanning…" : "Scan"}
+                    </button>
                   </div>
-                </Link>
+                </div>
               </Card>
             );
           })}
 
           {repos.length === 0 && (
             <Card className="py-12 text-center">
-              <Shield size={32} className="text-zinc-700 mx-auto mb-3" />
-              <p className="text-sm text-zinc-400">No repos found.</p>
+              <Shield size={32} className="mx-auto mb-3" style={{ color: "var(--text-muted)" }} />
+              <p className="text-sm" style={{ color: "var(--text-secondary)" }}>No repos found.</p>
             </Card>
           )}
         </div>
