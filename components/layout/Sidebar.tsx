@@ -92,21 +92,17 @@ export function Sidebar() {
         "bg-[rgb(21,21,26)] border-r border-[rgba(230,230,230,0.08)]"
       )}
     >
-      {/* ── Logo ─────────────────────────────────────────── */}
-      {/*
-        Single logo image. The aside's overflow-x-hidden crops it to the
-        hex icon mark when collapsed (56px). Full logo visible when expanded.
-      */}
+      {/* ── Logo (icon mark only) ────────────────────────── */}
       <Link
         href="/"
-        className="flex items-center h-14 px-3.5 border-b border-[rgba(230,230,230,0.08)] min-w-[220px]"
+        className="flex items-center justify-center h-14 border-b border-[rgba(230,230,230,0.08)] min-w-[220px]"
       >
         <Image
-          src="/hsb-logo-light.png"
+          src="/hsb-mark.png"
           alt="HSB"
-          width={320}
-          height={100}
-          className="h-7 w-auto max-w-none flex-shrink-0"
+          width={80}
+          height={80}
+          className="h-7 w-7 object-contain flex-shrink-0"
           priority
         />
       </Link>
