@@ -3,9 +3,9 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
-  Shield, AlertCircle, CheckCircle2, XCircle, AlertTriangle,
+  Shield, AlertCircle, CheckCircle2,
   GitPullRequest, FolderGit2, FileText, Network,
-  ArrowRight, Activity, Eye, GitMerge,
+  ArrowRight, Activity, Eye,
 } from "lucide-react";
 import { Shell } from "@/components/layout/Shell";
 import { Badge } from "@/components/ui/Badge";
@@ -14,28 +14,46 @@ import { cn } from "@/lib/utils";
 import { fetchOrgs, fetchDashboard, fetchIncidents } from "@/lib/api";
 import type { DashboardData } from "@/lib/api";
 
-function StatCard({
-  value, label, sublabel, color, icon: Icon, href,
-}: {
-  value: number | string; label: string; sublabel?: string;
-  color: string; icon: React.ElementType; href?: string;
+function RepoCard({ repo }: {
+  repo: { rkey: string; name: string; incidentCount: number; openPulls: number; scanCount: number };
 }) {
-  const inner = (
-    <div className={cn(
-      "border border-zinc-800 bg-zinc-900/40 p-4 transition-colors",
-      href && "hover:bg-zinc-800/40 cursor-pointer"
-    )}>
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-3xl font-bold font-mono text-zinc-100">{value}</p>
-          <p className="text-[10px] text-zinc-500 uppercase tracking-[0.12em] mt-1">{label}</p>
-          {sublabel && <p className="text-[10px] text-zinc-600 mt-0.5">{sublabel}</p>}
+  const status = repo.scanCount === 0 ? "unscanned" : repo.incidentCount > 0 ? "issues" : "clean";
+  return (
+    <Link href={`/repos/${repo.rkey}`} className="block h-full">
+      <div className="border border-zinc-800 bg-zinc-900/40 rounded-md p-4 hover:bg-zinc-800/40 hover:border-zinc-700 transition-all h-full flex flex-col gap-3 min-h-[100px]">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <FolderGit2 size={14} className="text-blue-400 flex-shrink-0" />
+            <span className="font-semibold text-sm text-blue-400 truncate">{repo.name}</span>
+          </div>
+          <Badge
+            variant={status === "clean" ? "success" : status === "issues" ? "danger" : "warning"}
+            size="sm"
+          >
+            {status}
+          </Badge>
         </div>
-        <Icon size={18} className={color} />
+        <div className="flex items-center gap-4 text-[11px] mt-auto">
+          <span className="flex items-center gap-1">
+            <AlertCircle size={11} className={repo.incidentCount > 0 ? "text-red-400" : "text-zinc-600"} />
+            <span className={repo.incidentCount > 0 ? "text-red-400" : "text-zinc-600"}>
+              {repo.incidentCount} incident{repo.incidentCount !== 1 ? "s" : ""}
+            </span>
+          </span>
+          <span className="flex items-center gap-1">
+            <GitPullRequest size={11} className={repo.openPulls > 0 ? "text-purple-400" : "text-zinc-600"} />
+            <span className={repo.openPulls > 0 ? "text-purple-400" : "text-zinc-600"}>
+              {repo.openPulls} PR{repo.openPulls !== 1 ? "s" : ""}
+            </span>
+          </span>
+          <span className="flex items-center gap-1 ml-auto">
+            <Eye size={11} className="text-zinc-600" />
+            <span className="text-zinc-600">{repo.scanCount} scan{repo.scanCount !== 1 ? "s" : ""}</span>
+          </span>
+        </div>
       </div>
-    </div>
+    </Link>
   );
-  return href ? <Link href={href}>{inner}</Link> : inner;
 }
 
 function MiniBar({ segments }: { segments: { value: number; color: string; label: string }[] }) {
@@ -103,7 +121,6 @@ export default function DashboardPage() {
   }
 
   const openIncidents = incidents.filter((i: any) => i.status === "open" || i.status === "in-progress");
-  const criticalCount = dash.incidents.severity.critical + dash.incidents.severity.high;
   const reposUnscanned = dash.repoCount - dash.scans.reposScanned;
 
   return (
@@ -130,39 +147,22 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* ── Top-level stats ────────────────────────────────────────── */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <StatCard
-            value={dash.repoCount}
-            label="Repositories"
-            sublabel={`${dash.scans.reposScanned} scanned`}
-            color="text-blue-400"
-            icon={FolderGit2}
-            href="/repos"
-          />
-          <StatCard
-            value={dash.incidents.open}
-            label="Open Incidents"
-            sublabel={`${criticalCount} critical/high`}
-            color="text-red-400"
-            icon={AlertCircle}
-            href="/issues"
-          />
-          <StatCard
-            value={dash.policies.count}
-            label="Policy Packs"
-            sublabel={`${dash.policies.totalControls} controls · ${dash.policies.totalBindings} bindings`}
-            color="text-amber-400"
-            icon={Shield}
-            href="/policies"
-          />
-          <StatCard
-            value={dash.pulls.totalOpen}
-            label="Open PRs"
-            sublabel={`across ${dash.repoStats.filter(r => r.openPulls > 0).length} repos`}
-            color="text-purple-400"
-            icon={GitPullRequest}
-          />
+        {/* ── Top repositories ──────────────────────────────────────── */}
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
+              <FolderGit2 size={12} className="text-green-400" />
+              Repositories
+            </h2>
+            <Link href="/repos" className="text-[10px] text-blue-400 hover:text-blue-300 flex items-center gap-1">
+              View all {dash.repoCount} <ArrowRight size={9} />
+            </Link>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            {dash.repoStats.slice(0, 3).map((repo) => (
+              <RepoCard key={repo.rkey} repo={repo} />
+            ))}
+          </div>
         </div>
 
         {/* ── Compliance health + Severity breakdown ─────────────────── */}
