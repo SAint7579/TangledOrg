@@ -179,7 +179,13 @@ export async function closePullRequest(repoRkey: string, pullRkey: string) {
 }
 
 export async function mergePullRequest(repoRkey: string, pullRkey: string) {
-  return apiPost<{ status: string; pullRkey: string; materializedRecords: number }>(
+  return apiPost<{
+    status: string;
+    pullRkey: string;
+    knotMerged: boolean;
+    knotError: string | null;
+    materializedRecords: number;
+  }>(
     `/api/repos/${repoRkey}/pulls/${pullRkey}/merge`, {}
   );
 }

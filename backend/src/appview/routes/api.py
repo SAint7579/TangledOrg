@@ -584,7 +584,7 @@ async def close_pull_request(rkey: str, pull_rkey: str, request: Request):
 
 @router.post("/repos/{rkey}/pulls/{pull_rkey}/merge")
 async def merge_pull_request(rkey: str, pull_rkey: str, request: Request):
-    """Merge a pull request: write merged status, materialise incidents into issues."""
+    """Merge a PR: merge on knot, write merged status, materialise incidents."""
     get_authenticated_session(request)
     session = _get_org_session()
 
@@ -592,10 +592,86 @@ async def merge_pull_request(rkey: str, pull_rkey: str, request: Request):
     if not pr_uri:
         raise HTTPException(status_code=404, detail="Pull request not found")
 
+    # Find the PR record to get source/target branches
+    pulls = _list_records(session, "sh.tangled.repo.pull")
+    pr_record = None
+    for p in pulls:
+        if p["rkey"] == pull_rkey:
+            pr_record = p
+            break
+    if not pr_record:
+        raise HTTPException(status_code=404, detail="Pull request record not found")
+
+    pr_val = pr_record["value"]
+    source = pr_val.get("source", {})
+    target = pr_val.get("target", {})
+    source_branch = source.get("branch", "") if isinstance(source, dict) else str(source)
+    target_branch = target.get("branch", "main") if isinstance(target, dict) else "main"
+
+    repo_rec = _get_repo_record(rkey)
+    knot = repo_rec["value"].get("knot", "")
+    owner_did = session["did"]
+    handle = session.get("handle", "")
+
     from datetime import datetime, timezone as tz
     now_iso = datetime.now(tz.utc).isoformat()
 
-    # Write merged status
+    knot_merged = False
+    knot_error = None
+
+    # ── Step 1: Merge on the knot via sh.tangled.repo.merge ──────────
+    if knot and source_branch:
+        import asyncio
+        loop = asyncio.get_event_loop()
+
+        try:
+            patch, author_name, author_email = await loop.run_in_executor(
+                None, _generate_format_patch, handle, rkey, source_branch, target_branch
+            )
+
+            if patch:
+                # Get ServiceAuth token for the knot
+                knot_did = f"did:web:{knot}"
+                sa_resp = httpx.get(
+                    f"{session['pds_issuer']}/xrpc/com.atproto.server.getServiceAuth",
+                    params={
+                        "aud": knot_did,
+                        "lxm": "sh.tangled.repo.merge",
+                        "exp": str(int(__import__('time').time()) + 60),
+                    },
+                    headers={"Authorization": f"Bearer {session['access_token']}"},
+                    timeout=15,
+                )
+                if sa_resp.status_code == 200:
+                    sa_token = sa_resp.json().get("token", "")
+
+                    merge_resp = httpx.post(
+                        f"https://{knot}/xrpc/sh.tangled.repo.merge",
+                        json={
+                            "did": owner_did,
+                            "name": rkey,
+                            "patch": patch,
+                            "branch": target_branch,
+                            "commitMessage": f"Merge {source_branch} into {target_branch}",
+                            "commitBody": f"PR: {pr_val.get('title', '')}\n\nMerged via TangledOrg governance platform.",
+                            "authorName": author_name,
+                            "authorEmail": author_email,
+                        },
+                        headers={"Authorization": f"Bearer {sa_token}"},
+                        timeout=30,
+                    )
+                    if merge_resp.status_code in (200, 201, 204):
+                        knot_merged = True
+                    else:
+                        knot_error = f"Knot merge failed ({merge_resp.status_code}): {merge_resp.text[:200]}"
+                else:
+                    knot_error = f"ServiceAuth failed ({sa_resp.status_code}): {sa_resp.text[:200]}"
+            else:
+                knot_error = "Could not generate format-patch (no diff between branches)"
+        except Exception as exc:
+            knot_error = f"Knot merge error: {str(exc)[:200]}"
+
+    # ── Step 2: Write merged status to PDS ────────────────────────────
     resp = httpx.post(
         f"{session['pds_issuer']}/xrpc/com.atproto.repo.createRecord",
         json={
@@ -614,12 +690,10 @@ async def merge_pull_request(rkey: str, pull_rkey: str, request: Request):
     if resp.status_code not in (200, 201):
         raise HTTPException(status_code=resp.status_code, detail=resp.text)
 
-    # Materialise incidents/issues from assessment
+    # ── Step 3: Materialise incidents/issues from assessment ──────────
     materialized = 0
     try:
         from src.appview.pr_watcher import _materialize_on_merge
-        import asyncio
-        loop = asyncio.get_event_loop()
         materialized = await loop.run_in_executor(
             None, _materialize_on_merge, pr_uri, session
         )
@@ -632,8 +706,56 @@ async def merge_pull_request(rkey: str, pull_rkey: str, request: Request):
     return {
         "status": "merged",
         "pullRkey": pull_rkey,
+        "knotMerged": knot_merged,
+        "knotError": knot_error,
         "materializedRecords": materialized,
     }
+
+
+def _generate_format_patch(
+    handle: str, rkey: str, source_branch: str, target_branch: str
+) -> tuple[str, str, str]:
+    """Clone the repo and generate a git format-patch for the merge.
+
+    Returns (patch_text, author_name, author_email).
+    """
+    import subprocess, tempfile
+
+    clone_url = f"https://tangled.sh/{handle}/{rkey}.git" if handle else ""
+    if not clone_url:
+        return ("", "", "")
+
+    clone_dir = tempfile.mkdtemp(prefix="tangled_merge_")
+    try:
+        subprocess.run(
+            ["git", "clone", "--depth", "50", clone_url, clone_dir],
+            capture_output=True, timeout=60,
+        )
+        subprocess.run(
+            ["git", "fetch", "origin", f"{source_branch}:{source_branch}"],
+            capture_output=True, timeout=30, cwd=clone_dir,
+        )
+        result = subprocess.run(
+            ["git", "format-patch", "--stdout", f"{target_branch}...{source_branch}"],
+            capture_output=True, text=True, timeout=30, cwd=clone_dir,
+        )
+        patch = result.stdout
+
+        # Get author info from the last commit on the branch
+        author_result = subprocess.run(
+            ["git", "log", "-1", "--format=%an|%ae", source_branch],
+            capture_output=True, text=True, timeout=10, cwd=clone_dir,
+        )
+        parts = author_result.stdout.strip().split("|")
+        author_name = parts[0] if len(parts) >= 1 else "TangledOrg"
+        author_email = parts[1] if len(parts) >= 2 else "noreply@tangled.sh"
+
+        return (patch, author_name, author_email)
+    except Exception:
+        return ("", "", "")
+    finally:
+        import shutil
+        shutil.rmtree(clone_dir, ignore_errors=True)
 
 
 @router.get("/repos/{rkey}/tree")

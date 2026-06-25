@@ -63,7 +63,10 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
   const [createPRLoading, setCreatePRLoading] = useState(false);
   const [createPRResult, setCreatePRResult] = useState<any>(null);
   const [prActionLoading, setPrActionLoading] = useState<string | null>(null);
-  const [mergeResult, setMergeResult] = useState<{ pullRkey: string; materializedRecords: number } | null>(null);
+  const [mergeResult, setMergeResult] = useState<{
+    pullRkey: string; materializedRecords: number;
+    knotMerged: boolean; knotError: string | null;
+  } | null>(null);
   const [expandedPRId, setExpandedPRId] = useState<string | null>(null);
   const [prAssessments, setPrAssessments] = useState<Record<string, PRAssessmentResponse>>({});
   const [prAssessmentLoading, setPrAssessmentLoading] = useState<string | null>(null);
@@ -162,7 +165,12 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
     try {
       const result = await mergePullRequest(params.repo, prId);
       if (result) {
-        setMergeResult({ pullRkey: prId, materializedRecords: result.materializedRecords });
+        setMergeResult({
+          pullRkey: prId,
+          materializedRecords: result.materializedRecords,
+          knotMerged: result.knotMerged,
+          knotError: result.knotError,
+        });
       }
       fetchRepoPulls(params.repo).then((data) => setPulls(data?.pulls || []));
       fetchRepoIssues(params.repo).then((data) => setIssues(data?.issues || []));
@@ -873,13 +881,22 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
 
                             {/* Merge result */}
                             {mergeResult?.pullRkey === pr.id && (
-                              <div className="mt-3 px-3 py-2 rounded bg-purple-950/30 border border-purple-900/30">
+                              <div className="mt-3 px-3 py-2 rounded bg-purple-950/30 border border-purple-900/30 space-y-1.5">
                                 <div className="flex items-center gap-2">
                                   <GitMerge size={12} className="text-purple-400" />
-                                  <span className="text-xs text-purple-300">PR merged successfully</span>
+                                  <span className="text-xs text-purple-300">PR merged</span>
                                 </div>
+                                {mergeResult?.knotMerged ? (
+                                  <p className="text-[10px] text-green-400 pl-5 flex items-center gap-1.5">
+                                    <CheckCircle2 size={10} /> Code merged on Tangled knot
+                                  </p>
+                                ) : mergeResult?.knotError ? (
+                                  <p className="text-[10px] text-amber-400/80 pl-5">
+                                    Knot merge: {mergeResult.knotError}
+                                  </p>
+                                ) : null}
                                 {(mergeResult?.materializedRecords ?? 0) > 0 && (
-                                  <p className="text-[10px] text-zinc-400 mt-1 pl-5">
+                                  <p className="text-[10px] text-zinc-400 pl-5">
                                     {mergeResult?.materializedRecords} records created (issues + incidents in affected repos)
                                   </p>
                                 )}
