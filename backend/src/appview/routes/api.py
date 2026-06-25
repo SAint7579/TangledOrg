@@ -1290,24 +1290,35 @@ async def list_incidents(request: Request):
     for s in sla_trackers:
         sla_map[s["value"].get("incident", "")] = s["value"]
 
-    # Build DID→handle map from membership records for assignee resolution
+    # Build DID→handle map from membership records for assignee resolution.
+    # Always seed with the org-owner session so AI-generated incidents get assigned.
+    org_owner_did    = session.get("did", "")
+    org_owner_handle = session.get("handle", "")
+
     memberships = _list_records(session, "sh.tangled.governance.org.membership")
     member_dids = list({m["value"].get("memberDid", "") for m in memberships if m["value"].get("memberDid")})
     did_to_handle: dict[str, str] = {}
     if member_dids:
         did_to_handle = _resolve_dids_batch(session["pds_issuer"], member_dids)
 
-    # Find the default org-owner handle as fallback assignee
+    # Seed with org owner so their DID always resolves
+    if org_owner_did and org_owner_handle:
+        did_to_handle.setdefault(org_owner_did, org_owner_handle)
+
+    # Find the best member-role owner as secondary fallback
     roles = _list_records(session, "sh.tangled.governance.org.role")
     role_map = {r["uri"]: r["value"] for r in roles}
-    owner_handle: str = ""
+    role_owner_handle: str = ""
     for m in memberships:
         val_m = m["value"]
         role_data = role_map.get(val_m.get("role", ""), {})
         if role_data.get("slug", "") in ("owner", "admin"):
             did = val_m.get("memberDid", "")
-            owner_handle = did_to_handle.get(did, did)
+            role_owner_handle = did_to_handle.get(did, did)
             break
+
+    # Priority: explicit member role owner → org session owner
+    default_assignee = role_owner_handle or org_owner_handle
 
     result = []
     for inc in incidents:
@@ -1316,9 +1327,9 @@ async def list_incidents(request: Request):
         repo_uri = val.get("repo", "")
         linked_issue = issue_map.get(issue_uri)
 
-        # Resolve assignee: prefer issue creator → org owner fallback
+        # Prefer the issue/incident's createdBy DID; fall back to org owner
         created_by_did = (linked_issue or {}).get("createdBy", "") or val.get("createdBy", "")
-        assignee_handle = did_to_handle.get(created_by_did, "") or owner_handle
+        assignee_handle = did_to_handle.get(created_by_did, "") or default_assignee
 
         result.append({
             "id": inc["rkey"], "uri": inc["uri"], **val,
