@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
-import { Shield, ScanLine, CheckCircle2, Clock } from "lucide-react";
+import { Shield, ScanLine, CheckCircle2, Clock, Loader2 } from "lucide-react";
 import { Shell } from "@/components/layout/Shell";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
@@ -165,16 +165,16 @@ export default function ReposPage() {
                       className="flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1.5 rounded border transition-all disabled:opacity-50"
                       style={{
                         backgroundColor: isScanning ? "var(--hover-bg)" : "transparent",
-                        borderColor: "var(--border-subtle)",
-                        color: isScanning ? "var(--text-muted)" : "var(--text-secondary)",
+                        borderColor: isScanning ? "#818cf8" : "var(--border-subtle)",
+                        color: isScanning ? "#a5b4fc" : "var(--text-secondary)",
                       }}
                       title="Run AI compliance scan"
                     >
-                      <ScanLine
-                        size={12}
-                        className={isScanning ? "animate-pulse" : ""}
-                        style={{ color: "#a5b4fc" }}
-                      />
+                      {isScanning ? (
+                        <Loader2 size={12} className="animate-spin" style={{ color: "#a5b4fc" }} />
+                      ) : (
+                        <ScanLine size={12} style={{ color: "#a5b4fc" }} />
+                      )}
                       {isScanning ? "Scanning…" : "Scan"}
                     </button>
                   </div>
