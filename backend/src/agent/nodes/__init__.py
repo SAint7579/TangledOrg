@@ -36,8 +36,19 @@ try:
 except ImportError:
     _LANGGRAPH_AVAILABLE = False
 
+import re as _re
+
 from src.agent.tools._client import _val, get_client
 from src.config import settings
+
+
+def _extract_json(text: str) -> dict:
+    """Parse JSON from Claude's response, stripping markdown fences if present."""
+    text = text.strip()
+    m = _re.search(r"```(?:json)?\s*\n?(.*?)```", text, _re.DOTALL)
+    if m:
+        text = m.group(1).strip()
+    return json.loads(text)
 from src.models import (
     AgentRun,
     ControlEvaluation,
@@ -654,9 +665,9 @@ If nothing would actually break, return {{"edges": []}}."""
                 state.claude_tokens_out += response.usage_metadata.get("output_tokens", 0)
 
             try:
-                parsed = json.loads(raw)
+                parsed = _extract_json(raw)
                 ai_edges = parsed.get("edges", [])
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, ValueError):
                 ai_edges = []
 
             edge_lookup = {(e["downstreamRepoRkey"], e.get("downstreamPath", "")): e for e in edges_for_analysis}
@@ -843,7 +854,7 @@ def claude_reason(state: ComplianceState) -> ComplianceState:
             state.claude_tokens_out = response.usage_metadata.get("output_tokens", 0)
 
         # Parse structured JSON response
-        parsed = json.loads(raw)
+        parsed = _extract_json(raw)
         raw_level = parsed.get("risk_level", "medium")
         # Severity enum doesn't include "none"; map it to "low"
         state.risk_level = raw_level if raw_level in ("critical", "high", "medium", "low") else "low"

@@ -1142,7 +1142,19 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
                             Policy: <span className="text-zinc-400">{scanResult.policy_pack}</span>
                           </p>
                         )}
-                        <p className="text-sm text-zinc-300">{scanResult.summary}</p>
+                        <p className="text-sm text-zinc-300">
+                          {(() => {
+                            const s = scanResult.summary || "";
+                            if (s.trimStart().startsWith("{") || s.trimStart().startsWith("```")) {
+                              try {
+                                const cleaned = s.replace(/^```json?\s*\n?/m, "").replace(/```\s*$/m, "");
+                                const parsed = JSON.parse(cleaned);
+                                return parsed.summary || s.slice(0, 300);
+                              } catch { return s.slice(0, 300); }
+                            }
+                            return s;
+                          })()}
+                        </p>
 
                         <div className="grid grid-cols-3 gap-3">
                           <div className="flex items-center gap-2 p-2.5 bg-green-950/30 border border-green-900/30 rounded">
@@ -1359,7 +1371,18 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
                               {/* Summary */}
                               <div>
                                 <p className="text-xs text-zinc-500 mb-1">Policy: {scan.policyPack}</p>
-                                <p className="text-sm text-zinc-300">{scan.summary}</p>
+                                <p className="text-sm text-zinc-300">
+                                  {(() => {
+                                    const s = scan.summary || "";
+                                    if (s.trimStart().startsWith("{") || s.trimStart().startsWith("```")) {
+                                      try {
+                                        const cleaned = s.replace(/^```json?\s*\n?/m, "").replace(/```\s*$/m, "");
+                                        return JSON.parse(cleaned).summary || s.slice(0, 300);
+                                      } catch { return s.slice(0, 300); }
+                                    }
+                                    return s;
+                                  })()}
+                                </p>
                               </div>
 
                               {/* Stats */}

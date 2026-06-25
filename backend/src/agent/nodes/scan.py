@@ -36,6 +36,18 @@ from src.agent.tools._client import _val, get_client
 from src.config import settings
 
 _HTTPX_TIMEOUT = 15
+
+import re as _re
+
+
+def _extract_json(text: str) -> dict:
+    """Parse JSON from Claude's response, stripping markdown fences if present."""
+    text = text.strip()
+    # Remove ```json ... ``` or ``` ... ``` wrappers
+    m = _re.search(r"```(?:json)?\s*\n?(.*?)```", text, _re.DOTALL)
+    if m:
+        text = m.group(1).strip()
+    return json.loads(text)
 _MAX_FILES = 30
 _MAX_CONTENT_BYTES = 120_000
 _SOURCE_EXTENSIONS = {
@@ -387,7 +399,7 @@ def evaluate_compliance(state: ScanState) -> ScanState:
             state.claude_tokens_in = response.usage_metadata.get("input_tokens", 0)
             state.claude_tokens_out = response.usage_metadata.get("output_tokens", 0)
 
-        parsed = json.loads(raw)
+        parsed = _extract_json(raw)
         state.risk_level = parsed.get("risk_level", "medium")
         state.summary = parsed.get("summary", "")
         state.findings = parsed.get("findings", [])
@@ -395,7 +407,7 @@ def evaluate_compliance(state: ScanState) -> ScanState:
         state.controls_failed = parsed.get("controls_failed", 0)
         state.controls_warning = parsed.get("controls_warning", 0)
 
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, ValueError):
         state.summary = raw[:3000] if "raw" in dir() else "Malformed response from Claude."
         state.risk_level = "medium"
     except Exception as exc:  # noqa: BLE001
@@ -533,7 +545,7 @@ If there are no cross-repo issues, return {{"cross_repo_findings": []}}"""
             state.claude_tokens_in += response.usage_metadata.get("input_tokens", 0)
             state.claude_tokens_out += response.usage_metadata.get("output_tokens", 0)
 
-        parsed = json.loads(raw)
+        parsed = _extract_json(raw)
         cross_findings = parsed.get("cross_repo_findings", [])
 
         if not cross_findings:
