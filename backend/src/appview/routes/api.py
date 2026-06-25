@@ -581,12 +581,15 @@ async def list_repo_pulls(rkey: str, request: Request):
             status_map[pull_uri] = status_val
             status_map[f"{pull_uri}__ts"] = created
 
+    repo_uri = repo_rec["uri"]
+
     result = []
     for pr in pulls:
         val = pr["value"]
         target = val.get("target", {})
         target_repo = target if isinstance(target, str) else target.get("repo", "")
-        if repo_did and repo_did not in target_repo:
+        # Match by AT-URI (target.repo) or by repoDid for backward compat
+        if target_repo and target_repo != repo_uri and repo_did not in target_repo and rkey not in target_repo:
             continue
         uri = pr["uri"]
         raw_status = status_map.get(uri, "sh.tangled.repo.pull.status.open")
