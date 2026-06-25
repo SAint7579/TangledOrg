@@ -18,6 +18,52 @@ import httpx
 from src.appview.routes.auth import get_authenticated_session
 from src.config import settings
 
+import json as _json
+from atproto_oauth import jwk_to_key, public_jwk, make_dpop_proof
+
+
+def _dpop_post_resource(
+    url: str,
+    access_token: str,
+    dpop_private_key_jwk: dict,
+    data: dict | None = None,
+    json_body: dict | None = None,
+) -> httpx.Response:
+    """POST to a resource server with a DPoP-bound access token.
+
+    Handles the use_dpop_nonce retry dance. Supports both form and JSON bodies.
+    """
+    private_key = jwk_to_key(dpop_private_key_jwk)
+    pub_jwk = public_jwk(dpop_private_key_jwk)
+    nonce: str | None = None
+
+    for _ in range(2):
+        proof = make_dpop_proof(
+            private_key, pub_jwk, "POST", url,
+            nonce=nonce, access_token=access_token,
+        )
+        headers = {
+            "Authorization": f"DPoP {access_token}",
+            "DPoP": proof,
+        }
+        if json_body is not None:
+            r = httpx.post(url, json=json_body, headers=headers, timeout=30)
+        else:
+            r = httpx.post(url, data=data or {}, headers=headers, timeout=30)
+
+        if r.status_code in (400, 401):
+            try:
+                err = r.json().get("error")
+            except Exception:
+                err = None
+            if err == "use_dpop_nonce":
+                new_nonce = r.headers.get("DPoP-Nonce")
+                if new_nonce and new_nonce != nonce:
+                    nonce = new_nonce
+                    continue
+        return r
+    return r
+
 router = APIRouter(prefix="/api", tags=["api"])
 
 
@@ -693,15 +739,14 @@ async def close_pull_request(rkey: str, pull_rkey: str, request: Request):
 
 @router.post("/repos/{rkey}/pulls/{pull_rkey}/merge")
 async def merge_pull_request(rkey: str, pull_rkey: str, request: Request):
-    """Merge a PR: merge on knot, write merged status, trigger normal repo scan."""
-    get_authenticated_session(request)
+    """Merge a PR on Tangled via the appview, then trigger a compliance scan."""
+    user_session = get_authenticated_session(request)
     session = _get_org_session()
 
     pr_uri = _resolve_pr_uri(session, pull_rkey)
     if not pr_uri:
         raise HTTPException(status_code=404, detail="Pull request not found")
 
-    # Find the PR record to get source/target branches
     pulls = _list_records(session, "sh.tangled.repo.pull")
     pr_record = None
     for p in pulls:
@@ -712,94 +757,33 @@ async def merge_pull_request(rkey: str, pull_rkey: str, request: Request):
         raise HTTPException(status_code=404, detail="Pull request record not found")
 
     pr_val = pr_record["value"]
-    source = pr_val.get("source", {})
-    target = pr_val.get("target", {})
-    source_branch = source.get("branch", "") if isinstance(source, dict) else str(source)
-    target_branch = target.get("branch", "main") if isinstance(target, dict) else "main"
-
-    repo_rec = _get_repo_record(rkey)
-    knot = repo_rec["value"].get("knot", "")
-    owner_did = session["did"]
     handle = session.get("handle", "")
 
-    from datetime import datetime, timezone as tz
-    now_iso = datetime.now(tz.utc).isoformat()
+    import logging
+    log = logging.getLogger("api")
 
-    knot_merged = False
-    knot_error = None
+    # ── Step 1: Merge on Tangled via the appview (user's DPoP session) ─
+    dpop_key_jwk = _json.loads(user_session["dpop_private_key"]) if isinstance(user_session["dpop_private_key"], str) else user_session["dpop_private_key"]
 
-    # ── Step 1: Merge on the knot via sh.tangled.repo.merge ──────────
-    if knot and source_branch:
-        import asyncio
-        loop = asyncio.get_event_loop()
+    # Tangled uses the PR number (from the record), not the rkey
+    pr_id = pr_val.get("id", pull_rkey)
+    merge_url = f"https://tangled.org/{handle}/{rkey}/pulls/{pr_id}/merge"
 
-        try:
-            patch, author_name, author_email = await loop.run_in_executor(
-                None, _generate_format_patch, handle, rkey, source_branch, target_branch
-            )
-
-            if patch:
-                # Get ServiceAuth token for the knot
-                knot_did = f"did:web:{knot}"
-                sa_resp = httpx.get(
-                    f"{session['pds_issuer']}/xrpc/com.atproto.server.getServiceAuth",
-                    params={
-                        "aud": knot_did,
-                        "lxm": "sh.tangled.repo.merge",
-                        "exp": str(int(__import__('time').time()) + 60),
-                    },
-                    headers={"Authorization": f"Bearer {session['access_token']}"},
-                    timeout=15,
-                )
-                if sa_resp.status_code == 200:
-                    sa_token = sa_resp.json().get("token", "")
-
-                    merge_resp = httpx.post(
-                        f"https://{knot}/xrpc/sh.tangled.repo.merge",
-                        json={
-                            "did": owner_did,
-                            "name": rkey,
-                            "patch": patch,
-                            "branch": target_branch,
-                            "commitMessage": f"Merge {source_branch} into {target_branch}",
-                            "commitBody": f"PR: {pr_val.get('title', '')}\n\nMerged via TangledOrg governance platform.",
-                            "authorName": author_name,
-                            "authorEmail": author_email,
-                        },
-                        headers={"Authorization": f"Bearer {sa_token}"},
-                        timeout=30,
-                    )
-                    if merge_resp.status_code in (200, 201, 204):
-                        knot_merged = True
-                    else:
-                        knot_error = f"Knot merge failed ({merge_resp.status_code}): {merge_resp.text[:200]}"
-                else:
-                    knot_error = f"ServiceAuth failed ({sa_resp.status_code}): {sa_resp.text[:200]}"
-            else:
-                knot_error = "Could not generate format-patch (no diff between branches)"
-        except Exception as exc:
-            knot_error = f"Knot merge error: {str(exc)[:200]}"
-
-    # ── Step 2: Write merged status to PDS ────────────────────────────
-    resp = httpx.post(
-        f"{session['pds_issuer']}/xrpc/com.atproto.repo.createRecord",
-        json={
-            "repo": session["did"],
-            "collection": "sh.tangled.repo.pull.status",
-            "record": {
-                "$type": "sh.tangled.repo.pull.status",
-                "pull": pr_uri,
-                "status": "sh.tangled.repo.pull.status.merged",
-                "createdAt": now_iso,
-            },
-        },
-        headers={"Authorization": f"Bearer {session['access_token']}"},
-        timeout=15,
+    merge_resp = _dpop_post_resource(
+        url=merge_url,
+        access_token=user_session["access_token"],
+        dpop_private_key_jwk=dpop_key_jwk,
+        data={},
     )
-    if resp.status_code not in (200, 201):
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    log.info("Tangled merge: %s %s", merge_resp.status_code, merge_resp.text[:200])
 
-    # ── Step 3: Trigger normal repo scan on the merged branch ────────
+    knot_merged = merge_resp.status_code in (200, 201, 204, 302, 303)
+    knot_error = None if knot_merged else f"Tangled merge returned {merge_resp.status_code}: {merge_resp.text[:200]}"
+
+    # ── Step 2: Trigger normal repo scan on the merged branch ────────
+    import asyncio
+    loop = asyncio.get_event_loop()
+
     scan_result = None
     try:
         from src.agent.nodes.scan import ScanState, scan_graph
@@ -819,8 +803,7 @@ async def merge_pull_request(rkey: str, pull_rkey: str, request: Request):
     except ImportError:
         pass
     except Exception as exc:
-        import logging
-        logging.getLogger("api").exception("Post-merge scan failed for %s: %s", rkey, exc)
+        log.exception("Post-merge scan failed for %s: %s", rkey, exc)
         scan_result = {"error": str(exc)[:200]}
 
     return {
@@ -832,50 +815,6 @@ async def merge_pull_request(rkey: str, pull_rkey: str, request: Request):
     }
 
 
-def _generate_format_patch(
-    handle: str, rkey: str, source_branch: str, target_branch: str
-) -> tuple[str, str, str]:
-    """Clone the repo and generate a git format-patch for the merge.
-
-    Returns (patch_text, author_name, author_email).
-    """
-    import subprocess, tempfile
-
-    clone_url = f"https://tangled.sh/{handle}/{rkey}.git" if handle else ""
-    if not clone_url:
-        return ("", "", "")
-
-    clone_dir = tempfile.mkdtemp(prefix="tangled_merge_")
-    try:
-        subprocess.run(
-            ["git", "clone", "--depth", "50", clone_url, clone_dir],
-            capture_output=True, timeout=60,
-        )
-        subprocess.run(
-            ["git", "fetch", "origin", f"{source_branch}:{source_branch}"],
-            capture_output=True, timeout=30, cwd=clone_dir,
-        )
-        result = subprocess.run(
-            ["git", "format-patch", "--stdout", f"{target_branch}...{source_branch}"],
-            capture_output=True, text=True, timeout=30, cwd=clone_dir,
-        )
-        patch = result.stdout
-
-        # Get author info from the last commit on the branch
-        author_result = subprocess.run(
-            ["git", "log", "-1", "--format=%an|%ae", source_branch],
-            capture_output=True, text=True, timeout=10, cwd=clone_dir,
-        )
-        parts = author_result.stdout.strip().split("|")
-        author_name = parts[0] if len(parts) >= 1 else "TangledOrg"
-        author_email = parts[1] if len(parts) >= 2 else "noreply@tangled.sh"
-
-        return (patch, author_name, author_email)
-    except Exception:
-        return ("", "", "")
-    finally:
-        import shutil
-        shutil.rmtree(clone_dir, ignore_errors=True)
 
 
 @router.get("/repos/{rkey}/tree")
@@ -966,8 +905,8 @@ class CreatePullRequest(BaseModel):
 
 @router.post("/repos/{rkey}/pulls")
 async def create_pull_request(rkey: str, body: CreatePullRequest, request: Request):
-    """Create a pull request and auto-trigger compliance check."""
-    get_authenticated_session(request)
+    """Create a pull request on Tangled via the user's DPoP session and run compliance."""
+    user_session = get_authenticated_session(request)
     session = _get_org_session()
 
     repo_rec = _get_repo_record(rkey)
@@ -980,107 +919,60 @@ async def create_pull_request(rkey: str, body: CreatePullRequest, request: Reque
     if not repo_did:
         raise HTTPException(status_code=400, detail="Repo has no repoDid")
 
-    from datetime import datetime, timezone
-    now_iso = datetime.now(timezone.utc).isoformat()
+    # ── Step 1: Create PR on Tangled appview using the user's DPoP token ──
+    dpop_key_jwk = _json.loads(user_session["dpop_private_key"]) if isinstance(user_session["dpop_private_key"], str) else user_session["dpop_private_key"]
 
-    # ── Step 1: Create PR record on PDS (guaranteed for our platform) ─
-    pr_record = {
-        "$type": "sh.tangled.repo.pull",
+    appview_url = f"https://tangled.org/{handle}/{rkey}/pulls/new"
+    form_data = {
+        "targetBranch": body.targetBranch,
+        "sourceBranch": body.sourceBranch,
         "title": body.title[:200],
         "body": body.body[:5000] if body.body else "",
-        "source": {"repo": repo_did, "branch": body.sourceBranch},
-        "target": {"repo": repo_did, "branch": body.targetBranch},
-        "rounds": [],
-        "createdAt": now_iso,
     }
 
-    resp = httpx.post(
-        f"{session['pds_issuer']}/xrpc/com.atproto.repo.createRecord",
-        json={
-            "repo": session["did"],
-            "collection": "sh.tangled.repo.pull",
-            "record": pr_record,
-        },
-        headers={"Authorization": f"Bearer {session['access_token']}"},
-        timeout=15,
+    import logging
+    log = logging.getLogger("api")
+
+    tangled_resp = _dpop_post_resource(
+        url=appview_url,
+        access_token=user_session["access_token"],
+        dpop_private_key_jwk=dpop_key_jwk,
+        data=form_data,
     )
-    if resp.status_code not in (200, 201):
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    log.info("Tangled PR creation: %s %s", tangled_resp.status_code, tangled_resp.headers.get("location", ""))
 
-    pr_result = resp.json()
-    pr_uri = pr_result.get("uri", "")
-    pr_rkey = pr_uri.rsplit("/", 1)[-1] if "/" in pr_uri else ""
+    # Wait for the PDS record to appear (Tangled writes it)
+    import time as _time
+    pr_uri = ""
+    pr_rkey = ""
+    for _attempt in range(5):
+        _time.sleep(1)
+        pulls = _list_records(session, "sh.tangled.repo.pull")
+        for p in pulls:
+            pv = p.get("value", {})
+            src = pv.get("source", {})
+            src_branch = src.get("branch", "") if isinstance(src, dict) else ""
+            if src_branch == body.sourceBranch and pv.get("title", "").startswith(body.title[:50]):
+                pr_uri = p.get("uri", "")
+                pr_rkey = pr_uri.rsplit("/", 1)[-1] if "/" in pr_uri else ""
+                break
+        if pr_uri:
+            break
 
-    httpx.post(
-        f"{session['pds_issuer']}/xrpc/com.atproto.repo.createRecord",
-        json={
-            "repo": session["did"],
-            "collection": "sh.tangled.repo.pull.status",
-            "record": {
-                "$type": "sh.tangled.repo.pull.status",
-                "pull": pr_uri,
-                "status": "sh.tangled.repo.pull.status.open",
-                "createdAt": now_iso,
-            },
-        },
-        headers={"Authorization": f"Bearer {session['access_token']}"},
-        timeout=15,
-    )
+    if not pr_uri:
+        log.warning("PR record not found in PDS after Tangled creation (status=%s). Response: %s",
+                     tangled_resp.status_code, tangled_resp.text[:300])
+        raise HTTPException(
+            status_code=502,
+            detail=f"PR creation on Tangled returned {tangled_resp.status_code} but record not found in PDS. Check Tangled."
+        )
 
-    # ── Step 2: Best-effort create on Tangled appview too ─────────────
-    tangled_pr_url = None
-    tangled_created = False
-    if handle:
-        try:
-            appview_url = f"https://tangled.org/{handle}/{rkey}/pulls/new"
-            form_data = {
-                "targetBranch": body.targetBranch,
-                "sourceBranch": body.sourceBranch,
-                "title": body.title[:200],
-                "body": body.body[:5000] if body.body else "",
-            }
-
-            sa_resp = httpx.get(
-                f"{session['pds_issuer']}/xrpc/com.atproto.server.getServiceAuth",
-                params={
-                    "aud": "did:web:tangled.org",
-                    "lxm": "sh.tangled.repo.pull",
-                    "exp": str(int(__import__('time').time()) + 60),
-                },
-                headers={"Authorization": f"Bearer {session['access_token']}"},
-                timeout=15,
-            )
-            auth_token = sa_resp.json().get("token", session["access_token"]) if sa_resp.status_code == 200 else session["access_token"]
-
-            tangled_client = httpx.Client(follow_redirects=False, timeout=30)
-            tangled_resp = tangled_client.post(
-                appview_url,
-                data=form_data,
-                headers={"Authorization": f"Bearer {auth_token}"},
-            )
-            if tangled_resp.status_code in (200, 201, 302, 303):
-                tangled_created = True
-                location = tangled_resp.headers.get("location", "") or tangled_resp.headers.get("hx-location", "")
-                if "/pulls/" in location:
-                    tangled_pr_url = f"https://tangled.org{location}" if location.startswith("/") else location
-            tangled_client.close()
-        except Exception:
-            import logging
-            logging.getLogger("api").exception("Tangled appview PR creation failed (best-effort)")
-
-        if not tangled_pr_url:
-            tangled_pr_url = (
-                f"https://tangled.org/{handle}/{rkey}/pulls/new"
-                f"?targetBranch={body.targetBranch}&sourceBranch={body.sourceBranch}"
-                f"&title={body.title[:200]}"
-            )
-
-    # ── Step 3: Auto-trigger compliance pipeline ─────────────────────
+    # ── Step 2: Auto-trigger compliance pipeline ─────────────────────
     compliance_result = None
     try:
         from src.agent.nodes import ComplianceState, graph
 
-        if graph is not None and knot and pr_uri:
+        if graph is not None and knot:
             import asyncio
 
             clone_url = f"https://tangled.sh/{handle}/{rkey}.git" if handle else f"https://{knot}/{owner_did}/{rkey}.git"
@@ -1115,8 +1007,6 @@ async def create_pull_request(rkey: str, body: CreatePullRequest, request: Reque
         "targetBranch": body.targetBranch,
         "status": "open",
         "compliance": compliance_result,
-        "tangledUrl": tangled_pr_url,
-        "tangledCreated": tangled_created,
     }
 
 
