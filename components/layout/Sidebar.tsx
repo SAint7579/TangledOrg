@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import {
-  Shield,
   LayoutDashboard,
   FolderGit2,
   Building2,
@@ -93,21 +93,23 @@ export function Sidebar() {
       )}
     >
       {/* ── Logo ─────────────────────────────────────────── */}
-      <div className="flex items-center h-14 px-3.5 border-b border-[rgba(230,230,230,0.08)] min-w-[220px]">
-        <Shield
-          size={20}
-          strokeWidth={2}
-          className="flex-shrink-0 text-[#a5b4fc]"
+      {/*
+        Single logo image. The aside's overflow-x-hidden crops it to the
+        hex icon mark when collapsed (56px). Full logo visible when expanded.
+      */}
+      <Link
+        href="/"
+        className="flex items-center h-14 px-3.5 border-b border-[rgba(230,230,230,0.08)] min-w-[220px]"
+      >
+        <Image
+          src="/hsb-logo-light.png"
+          alt="HSB"
+          width={320}
+          height={100}
+          className="h-7 w-auto max-w-none flex-shrink-0"
+          priority
         />
-        <div className="ml-3 flex items-baseline gap-1.5">
-          <FadeText className="text-sm font-semibold text-[rgb(230,230,230)] tracking-tight">
-            HSB
-          </FadeText>
-          <FadeText className="text-[9px] text-[rgba(230,230,230,0.3)] font-mono tracking-[0.12em] uppercase">
-            Governance
-          </FadeText>
-        </div>
-      </div>
+      </Link>
 
       {/* ── Navigation ───────────────────────────────────── */}
       <nav className="flex-1 py-2 overflow-y-auto">
