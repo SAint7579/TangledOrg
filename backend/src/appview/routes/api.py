@@ -966,7 +966,7 @@ class CreatePullRequest(BaseModel):
 
 @router.post("/repos/{rkey}/pulls")
 async def create_pull_request(rkey: str, body: CreatePullRequest, request: Request):
-    """Create a pull request on Tangled's appview and auto-trigger compliance check."""
+    """Create a pull request and auto-trigger compliance check."""
     get_authenticated_session(request)
     session = _get_org_session()
 
@@ -980,81 +980,102 @@ async def create_pull_request(rkey: str, body: CreatePullRequest, request: Reque
     if not repo_did:
         raise HTTPException(status_code=400, detail="Repo has no repoDid")
 
-    # ── Step 1: Create PR on Tangled appview (same as Tangled CLI) ────
-    appview_url = f"https://tangled.org/{handle}/{rkey}/pulls/new"
-    form_data = {
-        "targetBranch": body.targetBranch,
-        "sourceBranch": body.sourceBranch,
+    from datetime import datetime, timezone
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # ── Step 1: Create PR record on PDS (guaranteed for our platform) ─
+    pr_record = {
+        "$type": "sh.tangled.repo.pull",
         "title": body.title[:200],
         "body": body.body[:5000] if body.body else "",
+        "source": {"repo": repo_did, "branch": body.sourceBranch},
+        "target": {"repo": repo_did, "branch": body.targetBranch},
+        "rounds": [],
+        "createdAt": now_iso,
     }
 
-    # Get a ServiceAuth token for the appview
-    sa_resp = httpx.get(
-        f"{session['pds_issuer']}/xrpc/com.atproto.server.getServiceAuth",
-        params={
-            "aud": "did:web:tangled.org",
-            "lxm": "sh.tangled.repo.pull",
-            "exp": str(int(__import__('time').time()) + 60),
+    resp = httpx.post(
+        f"{session['pds_issuer']}/xrpc/com.atproto.repo.createRecord",
+        json={
+            "repo": session["did"],
+            "collection": "sh.tangled.repo.pull",
+            "record": pr_record,
+        },
+        headers={"Authorization": f"Bearer {session['access_token']}"},
+        timeout=15,
+    )
+    if resp.status_code not in (200, 201):
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+
+    pr_result = resp.json()
+    pr_uri = pr_result.get("uri", "")
+    pr_rkey = pr_uri.rsplit("/", 1)[-1] if "/" in pr_uri else ""
+
+    httpx.post(
+        f"{session['pds_issuer']}/xrpc/com.atproto.repo.createRecord",
+        json={
+            "repo": session["did"],
+            "collection": "sh.tangled.repo.pull.status",
+            "record": {
+                "$type": "sh.tangled.repo.pull.status",
+                "pull": pr_uri,
+                "status": "sh.tangled.repo.pull.status.open",
+                "createdAt": now_iso,
+            },
         },
         headers={"Authorization": f"Bearer {session['access_token']}"},
         timeout=15,
     )
 
-    auth_token = session["access_token"]
-    if sa_resp.status_code == 200:
-        auth_token = sa_resp.json().get("token", auth_token)
+    # ── Step 2: Best-effort create on Tangled appview too ─────────────
+    tangled_pr_url = None
+    tangled_created = False
+    if handle:
+        try:
+            appview_url = f"https://tangled.org/{handle}/{rkey}/pulls/new"
+            form_data = {
+                "targetBranch": body.targetBranch,
+                "sourceBranch": body.sourceBranch,
+                "title": body.title[:200],
+                "body": body.body[:5000] if body.body else "",
+            }
 
-    tangled_client = httpx.Client(follow_redirects=False, timeout=30)
-    tangled_resp = tangled_client.post(
-        appview_url,
-        data=form_data,
-        headers={"Authorization": f"Bearer {auth_token}"},
-    )
+            sa_resp = httpx.get(
+                f"{session['pds_issuer']}/xrpc/com.atproto.server.getServiceAuth",
+                params={
+                    "aud": "did:web:tangled.org",
+                    "lxm": "sh.tangled.repo.pull",
+                    "exp": str(int(__import__('time').time()) + 60),
+                },
+                headers={"Authorization": f"Bearer {session['access_token']}"},
+                timeout=15,
+            )
+            auth_token = sa_resp.json().get("token", session["access_token"]) if sa_resp.status_code == 200 else session["access_token"]
 
-    pr_url = None
-    pr_rkey = ""
-    if tangled_resp.status_code in (200, 201, 302, 303):
-        location = tangled_resp.headers.get("location", "") or tangled_resp.headers.get("hx-location", "")
-        if "/pulls/" in location:
-            pr_url = f"https://tangled.org{location}" if location.startswith("/") else location
-            pr_rkey = location.rsplit("/", 1)[-1] if "/" in location else ""
+            tangled_client = httpx.Client(follow_redirects=False, timeout=30)
+            tangled_resp = tangled_client.post(
+                appview_url,
+                data=form_data,
+                headers={"Authorization": f"Bearer {auth_token}"},
+            )
+            if tangled_resp.status_code in (200, 201, 302, 303):
+                tangled_created = True
+                location = tangled_resp.headers.get("location", "") or tangled_resp.headers.get("hx-location", "")
+                if "/pulls/" in location:
+                    tangled_pr_url = f"https://tangled.org{location}" if location.startswith("/") else location
+            tangled_client.close()
+        except Exception:
+            import logging
+            logging.getLogger("api").exception("Tangled appview PR creation failed (best-effort)")
 
-        if not pr_url:
-            resp_text = tangled_resp.text
-            for line in resp_text.splitlines():
-                if "/pulls/" in line:
-                    for part in line.split('"'):
-                        if "/pulls/" in part and part.startswith("/"):
-                            pr_url = f"https://tangled.org{part}"
-                            pr_rkey = part.rsplit("/", 1)[-1]
-                            break
-                    if pr_url:
-                        break
+        if not tangled_pr_url:
+            tangled_pr_url = (
+                f"https://tangled.org/{handle}/{rkey}/pulls/new"
+                f"?targetBranch={body.targetBranch}&sourceBranch={body.sourceBranch}"
+                f"&title={body.title[:200]}"
+            )
 
-        if not pr_url:
-            pr_url = f"https://tangled.org/{handle}/{rkey}/pulls"
-
-    tangled_client.close()
-
-    # Resolve the PR's AT-URI from PDS records (Tangled creates the record)
-    import time as _time
-    pr_uri = ""
-    for _attempt in range(3):
-        _time.sleep(1)
-        pulls = _list_records(session, "sh.tangled.repo.pull")
-        for p in pulls:
-            pv = p.get("value", {})
-            src = pv.get("source", {})
-            src_branch = src.get("branch", "") if isinstance(src, dict) else ""
-            if src_branch == body.sourceBranch and pv.get("title", "") == body.title[:200]:
-                pr_uri = p.get("uri", "")
-                pr_rkey = pr_uri.rsplit("/", 1)[-1] if "/" in pr_uri else pr_rkey
-                break
-        if pr_uri:
-            break
-
-    # ── Step 2: Auto-trigger compliance pipeline ─────────────────────
+    # ── Step 3: Auto-trigger compliance pipeline ─────────────────────
     compliance_result = None
     try:
         from src.agent.nodes import ComplianceState, graph
@@ -1094,7 +1115,8 @@ async def create_pull_request(rkey: str, body: CreatePullRequest, request: Reque
         "targetBranch": body.targetBranch,
         "status": "open",
         "compliance": compliance_result,
-        "tangledUrl": pr_url,
+        "tangledUrl": tangled_pr_url,
+        "tangledCreated": tangled_created,
     }
 
 
