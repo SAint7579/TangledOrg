@@ -65,8 +65,11 @@ def _list_records_sync(session: dict, collection: str) -> list[dict]:
 def _resolve_clone_url(repo_record: dict, owner_did: str) -> str:
     """Build a git clone URL from a repo record's knot server."""
     val = repo_record.get("value", {})
-    knot = val.get("knot", "")
     rkey = repo_record.get("uri", "").rsplit("/", 1)[-1]
+    handle = settings.handle
+    if handle:
+        return f"https://tangled.sh/{handle}/{rkey}.git"
+    knot = val.get("knot", "")
     if knot:
         return f"https://{knot}/{owner_did}/{rkey}.git"
     return ""

@@ -703,7 +703,8 @@ async def create_pull_request(rkey: str, body: CreatePullRequest, request: Reque
         if graph is not None and knot:
             import asyncio
 
-            clone_url = f"https://{knot}/{owner_did}/{rkey}.git"
+            handle = session.get("handle", "")
+            clone_url = f"https://tangled.sh/{handle}/{rkey}.git" if handle else f"https://{knot}/{owner_did}/{rkey}.git"
             state = ComplianceState(
                 pr_uri=pr_uri,
                 repo_uri=repo_uri,
