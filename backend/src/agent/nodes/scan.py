@@ -589,6 +589,27 @@ If there are no cross-repo issues, return {{"cross_repo_findings": []}}"""
                     "createdAt": now.isoformat(),
                 },
             )
+
+            # Also create an incident linked to this cross-repo issue
+            category = finding.get("dependency_type", "other")
+            if category not in (
+                "data-leak", "vulnerability", "unauthorized-access",
+                "supply-chain", "misconfiguration", "other",
+            ):
+                category = "other"
+
+            from src.models import Incident
+            incident = Incident(
+                issue=issue_result["uri"],
+                repo=ds_uri,
+                severity=sev if sev in ("critical", "high", "medium", "low") else "medium",
+                category=category,
+                description=f"[Cross-repo from {state.repo_rkey}] {finding.get('description', '')}"[:2000],
+                status="open",
+                created_at=now,
+            )
+            client.create_governance_record(incident)
+
             state.cross_repo_issues_created.append({
                 "uri": issue_result["uri"],
                 "downstream_repo": ds_rkey,
