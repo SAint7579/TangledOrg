@@ -823,10 +823,10 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
                                   <div className="space-y-1">
                                     <h4 className="text-xs text-zinc-500 flex items-center gap-1.5">
                                       <AlertTriangle size={10} className="text-orange-400" />
-                                      Potential Downstream Impact ({assessment.impact.affectedEdges.length} repo{assessment.impact.affectedEdges.length > 1 ? "s" : ""})
+                                      Downstream Impact Analysis ({assessment.impact.affectedEdges.length} repo{assessment.impact.affectedEdges.length > 1 ? "s" : ""})
                                     </h4>
                                     <p className="text-[9px] text-zinc-600 italic">
-                                      Issues will be created in these repos when the PR is merged.
+                                      AI analyzed the actual upstream and downstream code to identify breaking changes.
                                     </p>
                                     <div className="divide-y divide-zinc-800/60">
                                       {assessment.impact.affectedEdges.map((edge, i) => (
@@ -838,7 +838,10 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
                                               <span className="text-[10px] text-zinc-500 font-mono">:{edge.downstreamPath}</span>
                                             )}
                                           </div>
-                                          <p className="text-[10px] text-zinc-600 mt-0.5 pl-5">{edge.reason}</p>
+                                          <p className="text-[10px] text-zinc-400 mt-0.5 pl-5">{edge.reason}</p>
+                                          {edge.actionRequired && edge.actionRequired !== "review-recommended" && (
+                                            <p className="text-[10px] text-amber-500/80 mt-0.5 pl-5 italic">Action: {edge.actionRequired}</p>
+                                          )}
                                         </div>
                                       ))}
                                     </div>

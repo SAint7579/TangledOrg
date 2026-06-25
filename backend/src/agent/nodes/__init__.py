@@ -540,39 +540,158 @@ def run_scans(state: ComplianceState) -> ComplianceState:
 # ---------------------------------------------------------------------------
 
 def check_deps(state: ComplianceState) -> ComplianceState:
-    """Walk the code dependency graph to find downstream impact."""
+    """Walk the dependency graph, fetch downstream code, and use AI to explain impact."""
     try:
-        affected_edges = []
+        affected_edges: list[dict] = []
         downstream_repo_set: set[str] = set()
+        edges_for_analysis: list[dict] = []
+
+        client = get_client()
+        repos = client.list_records("sh.tangled.repo").get("records", [])
+        uri_to_rkey: dict[str, str] = {}
+        for r in repos:
+            uri_to_rkey[r.get("uri", "")] = r.get("uri", "").rsplit("/", 1)[-1]
 
         for changed_file in state.changed_files:
             for dep in state.code_dependencies:
                 v = _val(dep)
-                # We care about edges where this repo is the target (upstream)
-                # and the changed file matches the target path
                 if v.get("targetRepo") != state.repo_uri:
                     continue
                 target_path = v.get("targetPath", "")
                 if not target_path:
                     continue
-                # Exact match or directory prefix
                 if changed_file == target_path or changed_file.startswith(target_path.rstrip("/") + "/"):
                     dep_uri = dep.get("uri", "")
                     source_repo = v.get("sourceRepo", "")
                     if source_repo and source_repo != state.repo_uri:
                         downstream_repo_set.add(source_repo)
-                        affected_edges.append({
+                        ds_path = v.get("sourcePath", "")
+                        edges_for_analysis.append({
                             "codeDependency": dep_uri,
                             "downstreamRepo": source_repo,
-                            "reason": f"Changed path '{changed_file}' is depended on by {source_repo}",
-                            "downstreamPath": v.get("sourcePath"),
-                            "actionRequired": "review-recommended",
+                            "downstreamRepoRkey": uri_to_rkey.get(source_repo, source_repo),
+                            "downstreamPath": ds_path,
+                            "changedFile": changed_file,
+                            "depType": v.get("dependencyType", "unknown"),
                         })
+
+        if not edges_for_analysis:
+            state.impact_risk_level = "none"
+            return state
+
+        # Fetch actual code: the changed upstream file + each downstream file
+        from src.agent.tools.tangled import get_file_content
+        upstream_rkey = uri_to_rkey.get(state.repo_uri, "")
+
+        code_context = ""
+        for edge in edges_for_analysis[:8]:
+            upstream_blob = get_file_content(upstream_rkey, edge["changedFile"], state.pr_branch or "main")
+            upstream_code = upstream_blob.get("content", "")[:3000]
+
+            ds_rkey = edge["downstreamRepoRkey"]
+            ds_path = edge["downstreamPath"] or ""
+            ds_code = ""
+            if ds_path and ds_rkey:
+                ds_blob = get_file_content(ds_rkey, ds_path)
+                ds_code = ds_blob.get("content", "")[:3000]
+
+            code_context += (
+                f"\n---\n### Changed upstream file: {upstream_rkey}/{edge['changedFile']}\n"
+                f"```\n{upstream_code}\n```\n"
+                f"### Downstream file that depends on it: {ds_rkey}/{ds_path}\n"
+                f"```\n{ds_code}\n```\n"
+                f"Dependency type: {edge['depType']}\n"
+            )
+
+        # Also include the diff so the AI knows what specifically changed
+        diff_snippet = (state.diff_text or "")[:4000]
+
+        api_key = settings.anthropic_api_key
+        if api_key and _LANGGRAPH_AVAILABLE:
+            prompt = f"""## PR Dependency Impact Analysis
+
+A pull request in repo `{upstream_rkey}` changes these files: {', '.join(state.changed_files)}
+
+### Diff (what changed)
+```
+{diff_snippet}
+```
+
+### Upstream ↔ Downstream Code
+{code_context}
+
+---
+
+For each affected downstream file, analyze:
+1. What specifically could break or become inconsistent
+2. What action the downstream repo owner should take
+3. Severity: critical / high / medium / low
+
+Return JSON:
+{{
+  "edges": [
+    {{
+      "downstream_repo": "repo name",
+      "downstream_path": "file path",
+      "reason": "Specific explanation of what breaks and why (2-3 sentences)",
+      "action_required": "What needs to change in the downstream repo",
+      "severity": "critical|high|medium|low"
+    }}
+  ]
+}}
+
+If nothing would actually break, return {{"edges": []}}."""
+
+            llm = ChatAnthropic(model="claude-sonnet-4-6", api_key=api_key, max_tokens=2048)
+            response = llm.invoke([
+                SystemMessage(content="You are a dependency impact analyst. Analyze actual code to determine if upstream changes break downstream consumers. Be specific about what breaks. If the change is backward-compatible, say so. Return ONLY valid JSON."),
+                HumanMessage(content=prompt),
+            ])
+            raw = response.content if hasattr(response, "content") else str(response)
+
+            if hasattr(response, "usage_metadata") and response.usage_metadata:
+                state.claude_tokens_in += response.usage_metadata.get("input_tokens", 0)
+                state.claude_tokens_out += response.usage_metadata.get("output_tokens", 0)
+
+            try:
+                parsed = json.loads(raw)
+                ai_edges = parsed.get("edges", [])
+            except json.JSONDecodeError:
+                ai_edges = []
+
+            edge_lookup = {(e["downstreamRepoRkey"], e.get("downstreamPath", "")): e for e in edges_for_analysis}
+            for ai_edge in ai_edges:
+                ds_name = ai_edge.get("downstream_repo", "")
+                ds_path = ai_edge.get("downstream_path", "")
+                matched = edge_lookup.get((ds_name, ds_path))
+                if not matched:
+                    for key, val in edge_lookup.items():
+                        if key[0] == ds_name:
+                            matched = val
+                            break
+                if matched:
+                    severity = ai_edge.get("severity", "medium")
+                    action = ai_edge.get("action_required", "review-recommended")
+                    affected_edges.append({
+                        "codeDependency": matched["codeDependency"],
+                        "downstreamRepo": matched["downstreamRepo"],
+                        "reason": ai_edge.get("reason", "Potential impact detected"),
+                        "downstreamPath": ds_path or matched.get("downstreamPath"),
+                        "actionRequired": action,
+                    })
+        else:
+            for edge in edges_for_analysis:
+                affected_edges.append({
+                    "codeDependency": edge["codeDependency"],
+                    "downstreamRepo": edge["downstreamRepo"],
+                    "reason": f"Changed '{edge['changedFile']}' is depended on by {edge['downstreamRepoRkey']}",
+                    "downstreamPath": edge.get("downstreamPath"),
+                    "actionRequired": "review-recommended",
+                })
 
         state.affected_edges = affected_edges
         state.downstream_repos = sorted(downstream_repo_set)
 
-        # Determine impact risk level based on count and downstream complexity
         count = len(downstream_repo_set)
         if count == 0:
             state.impact_risk_level = "none"
