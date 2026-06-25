@@ -1,14 +1,10 @@
-"""Tools for reading native Tangled data: repos, issues, pull requests, files, commits.
+"""Tools for reading AND writing native Tangled data.
 
-These complement the governance tools (org, policy, compliance, graph, audit) and
-give the agent visibility into the actual code activity happening in repositories.
+Read tools: repos, issues, PRs, file tree, commits.
+Write tools: create/close/reopen issues, comment on issues,
+             update PR status, comment on PRs.
 
-Typical queries the agent can answer with these tools:
-  - "What repos are in this org?"
-  - "List open issues in the payments repo"
-  - "What PRs are open against main?"
-  - "What files changed in PR #42?"
-  - "Show me the commit history for the auth repo"
+These complement the governance tools (org, policy, compliance, graph, audit).
 """
 
 from typing import Optional
@@ -507,6 +503,209 @@ def get_repo_log(repo_rkey: str, ref: str = "main", limit: int = 20) -> dict:
         return {"error": f"Cannot reach knot server for '{repo_rkey}'", "commits": []}
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc), "commits": []}
+
+
+# ---------------------------------------------------------------------------
+# Write helpers
+# ---------------------------------------------------------------------------
+
+
+def _create_native_record(collection: str, record: dict) -> dict:
+    """Write a native Tangled record to the org's PDS.
+
+    Unlike governance records, native Tangled records (issues, PRs, etc.)
+    have no Pydantic model, so we call the SDK directly with a plain dict.
+    Returns {"uri": ..., "cid": ...}.
+    """
+    from atproto import models as _atmodels
+
+    client = get_client()
+    data = {**record, "$type": collection}
+    response = client.client.com.atproto.repo.create_record(
+        _atmodels.ComAtprotoRepoCreateRecord.Data(
+            repo=client.did,
+            collection=collection,
+            record=data,
+        )
+    )
+    return {"uri": response.uri, "cid": response.cid}
+
+
+def _repo_did_for_rkey(repo_rkey: str) -> str:
+    """Return the repoDid for a given repo rkey. Raises ValueError if not found."""
+    repos = _list_tangled_records("sh.tangled.repo")
+    for r in repos:
+        uri = r.get("uri", "")
+        if uri.rsplit("/", 1)[-1] == repo_rkey:
+            repo_did = _val(r).get("repoDid", "")
+            if not repo_did:
+                raise ValueError(f"Repo '{repo_rkey}' has no repoDid")
+            return repo_did
+    raise ValueError(f"Repo '{repo_rkey}' not found")
+
+
+# ---------------------------------------------------------------------------
+# Issue write tools
+# ---------------------------------------------------------------------------
+
+
+@tool
+def create_issue(repo_rkey: str, title: str, body: str) -> dict:
+    """Create a new issue in a repository.
+
+    repo_rkey: short name of the repo (e.g. 'payments-api')
+    title: issue title (required)
+    body: issue body / description (required)
+
+    Returns {"uri": ..., "cid": ...} of the created issue record.
+    The issue will be open by default.
+    """
+    from datetime import datetime, timezone
+
+    repo_did = _repo_did_for_rkey(repo_rkey)
+    return _create_native_record(
+        "sh.tangled.repo.issue",
+        {
+            "repo": repo_did,
+            "title": title,
+            "body": body,
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+
+@tool
+def close_issue(issue_uri: str) -> dict:
+    """Close an open issue.
+
+    issue_uri: the AT-URI of the issue (e.g. at://did:plc:.../sh.tangled.repo.issue/rkey)
+
+    Creates a sh.tangled.repo.issue.state record marking the issue closed.
+    Returns {"uri": ..., "cid": ...} of the state record.
+    """
+    from datetime import datetime, timezone
+
+    return _create_native_record(
+        "sh.tangled.repo.issue.state",
+        {
+            "issue": issue_uri,
+            "state": "sh.tangled.repo.issue.state.closed",
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+
+@tool
+def reopen_issue(issue_uri: str) -> dict:
+    """Reopen a closed issue.
+
+    issue_uri: the AT-URI of the issue
+
+    Creates a sh.tangled.repo.issue.state record marking the issue open.
+    Returns {"uri": ..., "cid": ...} of the state record.
+    """
+    from datetime import datetime, timezone
+
+    return _create_native_record(
+        "sh.tangled.repo.issue.state",
+        {
+            "issue": issue_uri,
+            "state": "sh.tangled.repo.issue.state.open",
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+
+@tool
+def comment_on_issue(issue_uri: str, body: str) -> dict:
+    """Post a comment on an issue.
+
+    issue_uri: the AT-URI of the issue
+    body: comment text (markdown supported)
+
+    Creates a sh.tangled.repo.issue.comment record.
+    Returns {"uri": ..., "cid": ...} of the comment record.
+    """
+    from datetime import datetime, timezone
+
+    return _create_native_record(
+        "sh.tangled.repo.issue.comment",
+        {
+            "issue": issue_uri,
+            "body": body,
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Pull request write tools
+# ---------------------------------------------------------------------------
+
+
+@tool
+def close_pull(pull_uri: str) -> dict:
+    """Close a pull request without merging.
+
+    pull_uri: the AT-URI of the pull request
+
+    Creates a sh.tangled.repo.pull.status record with status 'closed'.
+    Returns {"uri": ..., "cid": ...} of the status record.
+    """
+    from datetime import datetime, timezone
+
+    return _create_native_record(
+        "sh.tangled.repo.pull.status",
+        {
+            "pull": pull_uri,
+            "status": "sh.tangled.repo.pull.status.closed",
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+
+@tool
+def merge_pull(pull_uri: str) -> dict:
+    """Mark a pull request as merged.
+
+    pull_uri: the AT-URI of the pull request
+
+    Creates a sh.tangled.repo.pull.status record with status 'merged'.
+    Note: this only updates the Tangled record — it does NOT perform a git merge.
+    Returns {"uri": ..., "cid": ...} of the status record.
+    """
+    from datetime import datetime, timezone
+
+    return _create_native_record(
+        "sh.tangled.repo.pull.status",
+        {
+            "pull": pull_uri,
+            "status": "sh.tangled.repo.pull.status.merged",
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+
+@tool
+def comment_on_pull(pull_uri: str, body: str) -> dict:
+    """Post a comment on a pull request.
+
+    pull_uri: the AT-URI of the pull request
+    body: comment text (markdown supported)
+
+    Creates a sh.tangled.repo.pull.comment record.
+    Returns {"uri": ..., "cid": ...} of the comment record.
+    """
+    from datetime import datetime, timezone
+
+    return _create_native_record(
+        "sh.tangled.repo.pull.comment",
+        {
+            "pull": pull_uri,
+            "body": body,
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

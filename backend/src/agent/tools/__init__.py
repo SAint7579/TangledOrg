@@ -28,6 +28,13 @@ from src.agent.tools.tangled import (
     list_pulls,
     list_repos,
     search_issues,
+    create_issue,
+    close_issue,
+    reopen_issue,
+    comment_on_issue,
+    close_pull,
+    merge_pull,
+    comment_on_pull,
 )
 from src.agent.tools.audit import (
     complete_agent_run,
@@ -174,6 +181,13 @@ TANGLED_TOOLS = [
     list_all_pulls,
     get_repo_tree,
     get_repo_log,
+    create_issue,
+    close_issue,
+    reopen_issue,
+    comment_on_issue,
+    close_pull,
+    merge_pull,
+    comment_on_pull,
 ]
 
 ALL_TOOLS = TANGLED_TOOLS + ORG_TOOLS + POLICY_TOOLS + COMPLIANCE_TOOLS + GRAPH_TOOLS + AUDIT_TOOLS
@@ -187,7 +201,7 @@ __all__ = [
     "AUDIT_TOOLS",
     "TANGLED_TOOLS",
     "ALL_TOOLS",
-    # tangled native
+    # tangled native — read
     "get_org_summary",
     "list_repos",
     "get_repo",
@@ -200,6 +214,14 @@ __all__ = [
     "list_all_pulls",
     "get_repo_tree",
     "get_repo_log",
+    # tangled native — write
+    "create_issue",
+    "close_issue",
+    "reopen_issue",
+    "comment_on_issue",
+    "close_pull",
+    "merge_pull",
+    "comment_on_pull",
     # org
     "list_organizations",
     "get_organization",

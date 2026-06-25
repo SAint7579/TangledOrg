@@ -67,7 +67,9 @@ print(run_chat("Any open incidents?"))
 
 ### Tangled-native tools (`tools/tangled.py`)
 
-These read live data from the Tangled PDS and knot servers.
+These read and write live data from the Tangled PDS and knot servers.
+
+**Read tools**
 
 | Tool | Description |
 |------|-------------|
@@ -83,6 +85,18 @@ These read live data from the Tangled PDS and knot servers.
 | `list_all_pulls(status)` | PRs across the whole org |
 | `get_repo_tree(repo_rkey, ref, path)` | Browse file tree via knot server |
 | `get_repo_log(repo_rkey, ref, limit)` | Commit history via knot server |
+
+**Write tools**
+
+| Tool | Description |
+|------|-------------|
+| `create_issue(repo_rkey, title, body)` | Open a new issue in a repo |
+| `close_issue(issue_uri)` | Close an issue (writes a state record) |
+| `reopen_issue(issue_uri)` | Reopen a closed issue |
+| `comment_on_issue(issue_uri, body)` | Post a comment on an issue |
+| `close_pull(pull_uri)` | Close a PR without merging |
+| `merge_pull(pull_uri)` | Mark a PR as merged (record only, no git merge) |
+| `comment_on_pull(pull_uri, body)` | Post a comment on a PR |
 
 ### Governance tools
 
