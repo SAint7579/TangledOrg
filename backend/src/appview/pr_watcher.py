@@ -137,6 +137,9 @@ def _run_pr_pipeline(pr: dict, repo_record: dict, owner_did: str) -> Optional[di
 # ---------------------------------------------------------------------------
 
 
+_materialized_prs: set[str] = set()
+
+
 def _materialize_on_merge(pr_uri: str, session: dict) -> int:
     """When a PR is merged, create issues and incidents from its assessment.
 
@@ -144,8 +147,16 @@ def _materialize_on_merge(pr_uri: str, session: dict) -> int:
     for this PR and turns them into concrete issues (in the source repo and
     any affected downstream repos) plus linked compliance incidents.
 
+    Guarded against duplicate runs -- skips if already materialized for this PR.
     Returns the number of records created.
     """
+    global _materialized_prs
+
+    if pr_uri in _materialized_prs:
+        logger.info("PR %s already materialized, skipping", pr_uri)
+        return 0
+    _materialized_prs.add(pr_uri)
+
     from src.agent.tools._client import _val, get_client
     from src.agent.tools.tangled import _create_native_record
     from src.models import Incident
@@ -163,6 +174,14 @@ def _materialize_on_merge(pr_uri: str, session: dict) -> int:
     if not assessment:
         logger.info("No assessment found for merged PR %s, skipping materialisation", pr_uri)
         return 0
+
+    # Check if issues already exist for this assessment (cross-deploy dedup)
+    existing_issues = _list_records_sync(session, "sh.tangled.repo.issue")
+    assessment_uri = assessment["uri"]
+    for issue in existing_issues:
+        if assessment_uri in issue["value"].get("body", ""):
+            logger.info("Issues already exist for assessment %s, skipping", assessment_uri)
+            return 0
 
     av = assessment["value"]
     assessment_uri = assessment["uri"]
