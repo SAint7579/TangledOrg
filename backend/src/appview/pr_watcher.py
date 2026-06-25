@@ -2,10 +2,8 @@
 
 Since ATProto / Tangled does not support webhooks, this module polls for new
 open PRs at a configurable interval and invokes the PR compliance pipeline for
-each unprocessed PR.
-
-On merge detection, the watcher materialises potential incidents into real
-issues and incidents based on the stored PRAssessment and ImpactAssessment.
+each unprocessed PR. Issues/incidents are only created by the normal repo scan
+(triggered on merge or manually), never by the watcher itself.
 """
 
 import asyncio
@@ -376,9 +374,33 @@ async def _poll_once() -> int:
     return processed
 
 
+async def _seed_cache():
+    """Pre-populate the status cache on startup so existing PRs aren't re-processed."""
+    try:
+        session = _get_org_session_sync()
+    except Exception:
+        logger.exception("Failed to seed PR cache")
+        return
+
+    pulls = _list_records_sync(session, "sh.tangled.repo.pull")
+    statuses = _list_records_sync(session, "sh.tangled.repo.pull.status")
+    status_map = _build_status_map(statuses)
+
+    seeded = 0
+    for pr in pulls:
+        uri = pr["uri"]
+        raw_status = status_map.get(uri, "sh.tangled.repo.pull.status.open")
+        _pr_status_cache[uri] = _resolve_status_label(raw_status)
+        seeded += 1
+
+    logger.info("PR watcher cache seeded with %d existing PR(s)", seeded)
+
+
 async def _watcher_loop():
     """Main polling loop."""
     logger.info("PR watcher started (interval=%ds)", _POLL_INTERVAL_S)
+
+    await _seed_cache()
 
     while True:
         try:
