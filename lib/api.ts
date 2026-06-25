@@ -172,6 +172,18 @@ export async function fetchPRAssessment(repoRkey: string, pullRkey: string) {
   return apiFetch<PRAssessmentResponse>(`/api/repos/${repoRkey}/pulls/${pullRkey}/assessment`);
 }
 
+export async function closePullRequest(repoRkey: string, pullRkey: string) {
+  return apiPost<{ status: string; pullRkey: string }>(
+    `/api/repos/${repoRkey}/pulls/${pullRkey}/close`, {}
+  );
+}
+
+export async function mergePullRequest(repoRkey: string, pullRkey: string) {
+  return apiPost<{ status: string; pullRkey: string; materializedRecords: number }>(
+    `/api/repos/${repoRkey}/pulls/${pullRkey}/merge`, {}
+  );
+}
+
 // ── Branches ─────────────────────────────────────────────────────────────────
 
 export interface Branch {

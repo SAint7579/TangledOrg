@@ -4,8 +4,8 @@ import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import {
   Shield, Lock, FileText, Settings, AlertCircle,
-  Code2, GitPullRequest, GitBranch, Folder, File, ChevronRight, ChevronDown,
-  ScanSearch, Loader2, CheckCircle2, XCircle, AlertTriangle, Clock, Plus,
+  Code2, GitPullRequest, GitBranch, GitMerge, Folder, File, ChevronRight, ChevronDown,
+  ScanSearch, Loader2, CheckCircle2, XCircle, AlertTriangle, Clock, Plus, Trash2,
 } from "lucide-react";
 import { Shell } from "@/components/layout/Shell";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -15,6 +15,7 @@ import {
   fetchRepos, fetchRepoProfile, fetchPolicies, fetchIncidents,
   fetchRepoIssues, fetchRepoPulls, fetchRepoTree, runScan, fetchRepoScans,
   fetchPRAssessment, fetchRepoBranches, createPullRequest,
+  closePullRequest, mergePullRequest,
 } from "@/lib/api";
 import type { ScanResult, ScanHistoryItem, PRAssessmentResponse, Branch } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -61,6 +62,8 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
   const [createPRBody, setCreatePRBody] = useState("");
   const [createPRLoading, setCreatePRLoading] = useState(false);
   const [createPRResult, setCreatePRResult] = useState<any>(null);
+  const [prActionLoading, setPrActionLoading] = useState<string | null>(null);
+  const [mergeResult, setMergeResult] = useState<{ pullRkey: string; materializedRecords: number } | null>(null);
   const [expandedPRId, setExpandedPRId] = useState<string | null>(null);
   const [prAssessments, setPrAssessments] = useState<Record<string, PRAssessmentResponse>>({});
   const [prAssessmentLoading, setPrAssessmentLoading] = useState<string | null>(null);
@@ -137,6 +140,41 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
       setCreatePRLoading(false);
     }
   }, [params.repo, createPRBranch, createPRTarget, createPRTitle, createPRBody]);
+
+  const handleClosePR = useCallback(async (prId: string) => {
+    if (!confirm("Close this PR? This cannot be undone.")) return;
+    setPrActionLoading(prId);
+    try {
+      await closePullRequest(params.repo, prId);
+      fetchRepoPulls(params.repo).then((data) => setPulls(data?.pulls || []));
+      setExpandedPRId(null);
+    } catch (err: any) {
+      alert(err?.message || "Failed to close PR");
+    } finally {
+      setPrActionLoading(null);
+    }
+  }, [params.repo]);
+
+  const handleMergePR = useCallback(async (prId: string) => {
+    if (!confirm("Merge this PR? Potential incidents will be materialized into real issues.")) return;
+    setPrActionLoading(prId);
+    setMergeResult(null);
+    try {
+      const result = await mergePullRequest(params.repo, prId);
+      if (result) {
+        setMergeResult({ pullRkey: prId, materializedRecords: result.materializedRecords });
+      }
+      fetchRepoPulls(params.repo).then((data) => setPulls(data?.pulls || []));
+      fetchRepoIssues(params.repo).then((data) => setIssues(data?.issues || []));
+      fetchIncidents().then((data) =>
+        setIncidents((data?.incidents || []).filter((i: any) => (i.repo || "").includes(params.repo)))
+      );
+    } catch (err: any) {
+      alert(err?.message || "Failed to merge PR");
+    } finally {
+      setPrActionLoading(null);
+    }
+  }, [params.repo]);
 
   const handleExpandPR = useCallback(async (prId: string) => {
     if (expandedPRId === prId) {
@@ -801,6 +839,50 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
                                 <p className="text-[10px] text-zinc-700">
                                   {assessment.assessment.changedFiles} files changed &middot; assessed {assessment.assessment.createdAt ? new Date(assessment.assessment.createdAt).toLocaleString() : ""}
                                 </p>
+                              </div>
+                            )}
+
+                            {/* Merge / Close actions */}
+                            {pr.status === "open" && (
+                              <div className="mt-4 pt-3 border-t border-zinc-800 flex items-center gap-3">
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); handleMergePR(pr.id); }}
+                                  disabled={prActionLoading === pr.id}
+                                  className="flex items-center gap-1.5 text-xs px-4 py-2 rounded bg-purple-600 text-white hover:bg-purple-500 disabled:opacity-40 transition-colors"
+                                >
+                                  {prActionLoading === pr.id ? (
+                                    <><Loader2 size={12} className="animate-spin" /> Merging...</>
+                                  ) : (
+                                    <><GitMerge size={12} /> Merge PR</>
+                                  )}
+                                </button>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); handleClosePR(pr.id); }}
+                                  disabled={prActionLoading === pr.id}
+                                  className="flex items-center gap-1.5 text-xs px-3 py-2 rounded border border-zinc-700 text-zinc-400 hover:text-red-400 hover:border-red-500/30 disabled:opacity-40 transition-colors"
+                                >
+                                  <Trash2 size={12} /> Close PR
+                                </button>
+                                {assessment?.gate?.status === "blocked" && (
+                                  <span className="text-[10px] text-red-400/70 italic">
+                                    Gate is blocked — merging will still create issues
+                                  </span>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Merge result */}
+                            {mergeResult?.pullRkey === pr.id && (
+                              <div className="mt-3 px-3 py-2 rounded bg-purple-950/30 border border-purple-900/30">
+                                <div className="flex items-center gap-2">
+                                  <GitMerge size={12} className="text-purple-400" />
+                                  <span className="text-xs text-purple-300">PR merged successfully</span>
+                                </div>
+                                {(mergeResult?.materializedRecords ?? 0) > 0 && (
+                                  <p className="text-[10px] text-zinc-400 mt-1 pl-5">
+                                    {mergeResult?.materializedRecords} records created (issues + incidents in affected repos)
+                                  </p>
+                                )}
                               </div>
                             )}
                           </div>

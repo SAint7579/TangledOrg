@@ -539,6 +539,103 @@ async def get_pr_assessment(rkey: str, pull_rkey: str, request: Request):
     }
 
 
+def _resolve_pr_uri(session: dict, pull_rkey: str) -> str:
+    """Find the AT-URI for a pull request by its rkey."""
+    pulls = _list_records(session, "sh.tangled.repo.pull")
+    for p in pulls:
+        if p["rkey"] == pull_rkey:
+            return p["uri"]
+    return ""
+
+
+@router.post("/repos/{rkey}/pulls/{pull_rkey}/close")
+async def close_pull_request(rkey: str, pull_rkey: str, request: Request):
+    """Close (delete) a pull request by writing a closed status record."""
+    get_authenticated_session(request)
+    session = _get_org_session()
+
+    pr_uri = _resolve_pr_uri(session, pull_rkey)
+    if not pr_uri:
+        raise HTTPException(status_code=404, detail="Pull request not found")
+
+    from datetime import datetime, timezone as tz
+    now_iso = datetime.now(tz.utc).isoformat()
+
+    resp = httpx.post(
+        f"{session['pds_issuer']}/xrpc/com.atproto.repo.createRecord",
+        json={
+            "repo": session["did"],
+            "collection": "sh.tangled.repo.pull.status",
+            "record": {
+                "$type": "sh.tangled.repo.pull.status",
+                "pull": pr_uri,
+                "status": "sh.tangled.repo.pull.status.closed",
+                "createdAt": now_iso,
+            },
+        },
+        headers={"Authorization": f"Bearer {session['access_token']}"},
+        timeout=15,
+    )
+    if resp.status_code not in (200, 201):
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+
+    return {"status": "closed", "pullRkey": pull_rkey}
+
+
+@router.post("/repos/{rkey}/pulls/{pull_rkey}/merge")
+async def merge_pull_request(rkey: str, pull_rkey: str, request: Request):
+    """Merge a pull request: write merged status, materialise incidents into issues."""
+    get_authenticated_session(request)
+    session = _get_org_session()
+
+    pr_uri = _resolve_pr_uri(session, pull_rkey)
+    if not pr_uri:
+        raise HTTPException(status_code=404, detail="Pull request not found")
+
+    from datetime import datetime, timezone as tz
+    now_iso = datetime.now(tz.utc).isoformat()
+
+    # Write merged status
+    resp = httpx.post(
+        f"{session['pds_issuer']}/xrpc/com.atproto.repo.createRecord",
+        json={
+            "repo": session["did"],
+            "collection": "sh.tangled.repo.pull.status",
+            "record": {
+                "$type": "sh.tangled.repo.pull.status",
+                "pull": pr_uri,
+                "status": "sh.tangled.repo.pull.status.merged",
+                "createdAt": now_iso,
+            },
+        },
+        headers={"Authorization": f"Bearer {session['access_token']}"},
+        timeout=15,
+    )
+    if resp.status_code not in (200, 201):
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+
+    # Materialise incidents/issues from assessment
+    materialized = 0
+    try:
+        from src.appview.pr_watcher import _materialize_on_merge
+        import asyncio
+        loop = asyncio.get_event_loop()
+        materialized = await loop.run_in_executor(
+            None, _materialize_on_merge, pr_uri, session
+        )
+    except ImportError:
+        pass
+    except Exception as exc:
+        import logging
+        logging.getLogger("api").exception("Materialisation failed for PR %s: %s", pull_rkey, exc)
+
+    return {
+        "status": "merged",
+        "pullRkey": pull_rkey,
+        "materializedRecords": materialized,
+    }
+
+
 @router.get("/repos/{rkey}/tree")
 async def get_repo_tree(rkey: str, request: Request, ref: str = "main", path: str = ""):
     get_authenticated_session(request)  # auth check
