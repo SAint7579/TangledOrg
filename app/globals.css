@@ -18,6 +18,12 @@
   --table-head-bg: rgba(21, 21, 26, 0.04);
   --hover-bg: rgba(21, 21, 26, 0.05);
   --input-bg: rgba(255, 255, 255, 0.8);
+  --node-bg: rgba(255, 255, 255, 0.92);
+  --node-text: rgb(21, 21, 26);
+  --graph-bg: rgb(230, 230, 230);
+  --graph-dot: rgba(21, 21, 26, 0.09);
+  --panel-bg: rgba(255, 255, 255, 0.88);
+  --panel-border: rgba(21, 21, 26, 0.12);
 
   /* Badge variant colors — light mode */
   --badge-default-text: rgba(21, 21, 26, 0.5);
@@ -43,6 +49,12 @@
   --table-head-bg: rgba(230, 230, 230, 0.03);
   --hover-bg: rgba(230, 230, 230, 0.04);
   --input-bg: rgba(230, 230, 230, 0.05);
+  --node-bg: rgb(24, 24, 27);
+  --node-text: rgb(230, 230, 230);
+  --graph-bg: rgb(9, 9, 11);
+  --graph-dot: #27272a;
+  --panel-bg: rgba(24, 24, 27, 0.95);
+  --panel-border: rgba(230, 230, 230, 0.1);
 
   /* Badge variant colors — dark mode */
   --badge-default-text: rgba(230, 230, 230, 0.5);
@@ -99,6 +111,17 @@ body {
   to   { opacity: 1; transform: translateY(0); }
 }
 .animate-fade-in { animation: fadeIn 0.2s ease-out; }
+
+/* ── React Flow controls theming ─────────────────────────────── */
+.react-flow__controls-button {
+  background-color: var(--panel-bg) !important;
+  border-color: var(--panel-border) !important;
+  color: var(--text-secondary) !important;
+  fill: var(--text-secondary) !important;
+}
+.react-flow__controls-button:hover {
+  background-color: var(--hover-bg) !important;
+}
 
 /* ── hsb-main: light-mode overrides for legacy zinc classes ── */
 
