@@ -94,7 +94,7 @@ export default function DashboardPage() {
 
   if (loading || !dash) {
     return (
-      <Shell breadcrumbs={[{ label: "Dashboard" }]}>
+      <Shell breadcrumbs={[{ label: "Home" }]}>
         <div className="flex items-center justify-center h-64">
           <span className="text-zinc-500 text-sm animate-pulse">Loading dashboard...</span>
         </div>
@@ -107,7 +107,7 @@ export default function DashboardPage() {
   const reposUnscanned = dash.repoCount - dash.scans.reposScanned;
 
   return (
-    <Shell breadcrumbs={[{ label: "Dashboard" }]}>
+    <Shell breadcrumbs={[{ label: "Home" }]}>
       <div className="max-w-6xl mx-auto space-y-6">
         {/* Header */}
         <div className="flex items-start justify-between gap-4">

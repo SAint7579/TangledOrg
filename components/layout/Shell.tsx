@@ -20,8 +20,7 @@ export function Shell({ children, breadcrumbs, notificationCount }: ShellProps) 
     >
       <Sidebar />
 
-      {/* pl-14 = 56px = collapsed sidebar width */}
-      <div className="pl-14">
+      <div className="pl-[220px]">
         <Header breadcrumbs={breadcrumbs} notificationCount={notificationCount} />
         <main className="p-6 hsb-main">{children}</main>
       </div>

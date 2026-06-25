@@ -10,7 +10,6 @@ import {
   FileText,
   BookOpen,
   Network,
-  Users,
   AlertCircle,
   LogOut,
 } from "lucide-react";
@@ -23,52 +22,31 @@ const NAV_GROUPS = [
   {
     label: null,
     items: [
-      { href: "/", label: "Dashboard", icon: LayoutDashboard, color: "#93c5fd" },
+      { href: "/", label: "Home", icon: LayoutDashboard, color: "#93c5fd" },
     ],
   },
   {
     label: "Monitor",
     items: [
-      { href: "/issues", label: "Incidents",  icon: AlertCircle, color: "#fca5a5" },
-      { href: "/repos",  label: "Repos",   icon: FolderGit2,  color: "#86efac" },
+      { href: "/repos",  label: "Repos",     icon: FolderGit2,  color: "#86efac" },
+      { href: "/issues", label: "Incidents", icon: AlertCircle, color: "#fca5a5" },
     ],
   },
   {
     label: "Govern",
     items: [
-      { href: "/policies", label: "Policies",     icon: BookOpen,  color: "#fde68a" },
-      { href: "/org",      label: "Organization", icon: Building2, color: "#d8b4fe" },
+      { href: "/policies", label: "Policies",       icon: BookOpen,  color: "#fde68a" },
+      { href: "/graph",    label: "Dependency Map", icon: Network,   color: "#67e8f9" },
+      { href: "/org",      label: "Org",            icon: Building2, color: "#d8b4fe" },
     ],
   },
   {
     label: "Audit",
     items: [
-      { href: "/audit",  label: "Audit Log",      icon: FileText, color: "#fdba74" },
-      { href: "/graph",  label: "Dependency Map", icon: Network,  color: "#67e8f9" },
-      { href: "/people", label: "People",          icon: Users,    color: "#f9a8d4" },
+      { href: "/audit", label: "Audit Log", icon: FileText, color: "#fdba74" },
     ],
   },
 ];
-
-/* Text that fades in when the sidebar is expanded */
-function FadeText({
-  children,
-  className,
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <span
-      className={cn(
-        "whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-150",
-        className
-      )}
-    >
-      {children}
-    </span>
-  );
-}
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -87,8 +65,8 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        "group fixed left-0 top-0 h-screen z-50 flex flex-col overflow-x-hidden",
-        "w-14 hover:w-[220px] transition-[width] duration-200 ease-in-out",
+        "fixed left-0 top-0 h-screen z-50 flex flex-col",
+        "w-[220px]",
         "bg-[rgb(21,21,26)] border-r border-[rgba(230,230,230,0.08)]"
       )}
     >
@@ -112,10 +90,10 @@ export function Sidebar() {
         {NAV_GROUPS.map((group, gi) => (
           <div key={gi} className={gi > 0 ? "mt-2" : ""}>
             {group.label && (
-              <div className="px-3.5 pt-3 pb-0.5 min-w-[220px]">
-                <FadeText className="text-[9px] text-[rgba(230,230,230,0.22)] uppercase tracking-[0.16em] font-semibold">
+              <div className="px-3.5 pt-3 pb-0.5">
+                <span className="text-[9px] text-[rgba(230,230,230,0.22)] uppercase tracking-[0.16em] font-semibold whitespace-nowrap">
                   {group.label}
-                </FadeText>
+                </span>
               </div>
             )}
 
@@ -130,7 +108,7 @@ export function Sidebar() {
                       href={item.href}
                       title={item.label}
                       className={cn(
-                        "relative flex items-center h-10 px-3.5 min-w-[220px] transition-colors",
+                        "relative flex items-center h-10 px-3.5 transition-colors",
                         active
                           ? "bg-[rgba(230,230,230,0.07)]"
                           : "hover:bg-[rgba(230,230,230,0.04)]"
@@ -154,16 +132,16 @@ export function Sidebar() {
                         }}
                       />
 
-                      <FadeText
+                      <span
                         className={cn(
-                          "ml-3 text-[13px] font-medium",
+                          "ml-3 text-[13px] font-medium whitespace-nowrap",
                           active
                             ? "text-[rgb(230,230,230)]"
                             : "text-[rgba(230,230,230,0.6)]"
                         )}
                       >
                         {item.label}
-                      </FadeText>
+                      </span>
                     </Link>
                   </li>
                 );
@@ -174,13 +152,13 @@ export function Sidebar() {
       </nav>
 
       {/* ── User footer ──────────────────────────────────── */}
-      <div className="border-t border-[rgba(230,230,230,0.08)] px-3 py-3 min-w-[220px]">
+      <div className="border-t border-[rgba(230,230,230,0.08)] px-3 py-3">
         <div className="flex items-center gap-2.5">
           <div className="flex-shrink-0">
             <Avatar displayName={shortHandle} size="sm" />
           </div>
 
-          <div className="flex-1 min-w-0 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+          <div className="flex-1 min-w-0">
             <p className="text-xs font-medium text-[rgba(230,230,230,0.8)] truncate">
               {shortHandle}
             </p>
@@ -192,7 +170,7 @@ export function Sidebar() {
           <button
             onClick={handleLogout}
             title="Sign out"
-            className="flex-shrink-0 text-[rgba(230,230,230,0.3)] hover:text-[rgba(230,230,230,0.7)] opacity-0 group-hover:opacity-100 transition-all duration-150"
+            className="flex-shrink-0 text-[rgba(230,230,230,0.3)] hover:text-[rgba(230,230,230,0.7)] transition-colors"
           >
             <LogOut size={13} />
           </button>
