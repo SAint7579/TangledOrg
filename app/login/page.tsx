@@ -20,16 +20,23 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 flex items-center justify-center px-4">
+    <div
+      className="min-h-screen flex items-center justify-center px-4 transition-colors duration-200"
+      style={{ backgroundColor: "var(--bg-main)" }}
+    >
       <div className="w-full max-w-sm">
-        <div className="text-center mb-8">
+        {/* Logo */}
+        <div className="text-center mb-10">
           <div className="flex items-center justify-center gap-2.5 mb-3">
-            <Shield size={20} className="text-blue-400" strokeWidth={2} />
-            <span className="text-xl font-semibold text-zinc-100 tracking-tight">
-              Tangled Org
+            <Shield size={22} className="text-[#a5b4fc]" strokeWidth={2} />
+            <span
+              className="text-xl font-semibold tracking-tight"
+              style={{ color: "var(--text-primary)" }}
+            >
+              HSB
             </span>
           </div>
-          <p className="text-sm text-zinc-500">
+          <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
             Sign in with your AT Protocol identity
           </p>
         </div>
@@ -38,7 +45,8 @@ export default function LoginPage() {
           <div>
             <label
               htmlFor="handle"
-              className="block text-[10px] font-semibold text-zinc-600 uppercase tracking-[0.15em] mb-1.5"
+              className="block text-[10px] font-semibold uppercase tracking-[0.15em] mb-1.5"
+              style={{ color: "var(--text-muted)" }}
             >
               Handle
             </label>
@@ -51,23 +59,31 @@ export default function LoginPage() {
                 setError("");
               }}
               placeholder="yourname.tngl.sh"
-              className="w-full bg-zinc-900 border border-zinc-800 text-zinc-100 text-sm px-3 py-2.5 font-mono placeholder:text-zinc-700 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 transition-colors"
+              className="w-full text-sm px-3 py-2.5 font-mono transition-colors focus:outline-none focus:ring-1 focus:ring-[rgba(167,139,250,0.4)]"
+              style={{
+                backgroundColor: "var(--input-bg)",
+                border: "1px solid var(--border-subtle)",
+                color: "var(--text-primary)",
+              }}
               autoFocus
             />
             {error && (
-              <p className="text-red-400 text-xs mt-1.5">{error}</p>
+              <p className="text-[#fca5a5] text-xs mt-1.5">{error}</p>
             )}
           </div>
 
           <button
             type="submit"
-            className="w-full bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium py-2.5 transition-colors"
+            className="w-full bg-[#8b5cf6] hover:bg-[#a78bfa] text-white text-sm font-medium py-2.5 transition-colors"
           >
             Sign in with Tangled
           </button>
         </form>
 
-        <p className="text-center text-[11px] text-zinc-700 mt-6">
+        <p
+          className="text-center text-[11px] mt-6"
+          style={{ color: "var(--text-muted)" }}
+        >
           Uses ATProto OAuth. Your credentials go directly to your PDS.
         </p>
       </div>

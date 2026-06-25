@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
 import {
   Shield,
   LayoutDashboard,
@@ -18,148 +17,184 @@ import {
 import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/ui/Avatar";
 import { useAuth } from "@/components/auth/AuthProvider";
-import { logout, fetchOrgs } from "@/lib/api";
+import { logout } from "@/lib/api";
 
-const navGroups = [
+const NAV_GROUPS = [
   {
     label: null,
-    items: [{ href: "/", label: "Dashboard", icon: LayoutDashboard }],
+    items: [
+      { href: "/", label: "Dashboard", icon: LayoutDashboard, color: "#93c5fd" },
+    ],
   },
   {
     label: "Monitor",
     items: [
-      { href: "/issues", label: "Issues", icon: AlertCircle },
-      { href: "/repos", label: "Repos", icon: FolderGit2 },
+      { href: "/issues", label: "Issues",  icon: AlertCircle, color: "#fca5a5" },
+      { href: "/repos",  label: "Repos",   icon: FolderGit2,  color: "#86efac" },
     ],
   },
   {
     label: "Govern",
     items: [
-      { href: "/policies", label: "Policies", icon: BookOpen },
-      { href: "/org", label: "Organization", icon: Building2 },
+      { href: "/policies", label: "Policies",     icon: BookOpen,  color: "#fde68a" },
+      { href: "/org",      label: "Organization", icon: Building2, color: "#d8b4fe" },
     ],
   },
   {
     label: "Audit",
     items: [
-      { href: "/audit", label: "Audit Log", icon: FileText },
-      { href: "/graph", label: "Dependency Map", icon: Network },
-      { href: "/people", label: "People", icon: Users },
+      { href: "/audit",  label: "Audit Log",      icon: FileText, color: "#fdba74" },
+      { href: "/graph",  label: "Dependency Map", icon: Network,  color: "#67e8f9" },
+      { href: "/people", label: "People",          icon: Users,    color: "#f9a8d4" },
     ],
   },
 ];
 
+/* Text that fades in when the sidebar is expanded */
+function FadeText({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <span
+      className={cn(
+        "whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-150",
+        className
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
 export function Sidebar() {
   const pathname = usePathname();
   const { user } = useAuth();
-  const [orgName, setOrgName] = useState<string>("");
-
   const displayHandle = user?.handle ?? "anonymous";
   const shortHandle = displayHandle.split(".")[0];
-
-  useEffect(() => {
-    fetchOrgs()
-      .then(res => {
-        if (res?.organizations?.length) {
-          setOrgName(res.organizations[0].displayName || res.organizations[0].name);
-        }
-      })
-      .catch(() => {});
-  }, []);
 
   const handleLogout = async () => {
     await logout();
     window.location.href = "/login";
   };
 
+  const isActive = (href: string) =>
+    href === "/" ? pathname === "/" : pathname.startsWith(href);
+
   return (
-    <aside className="fixed left-0 top-0 h-screen w-[240px] flex flex-col bg-zinc-950 border-r border-zinc-800/70 z-40">
-      <div className="flex items-center gap-2.5 px-4 h-14 border-b border-zinc-800">
-        <Shield size={14} className="text-blue-400 flex-shrink-0" strokeWidth={2} />
-        <div className="flex flex-col">
-          <span className="text-sm font-semibold text-zinc-100 tracking-tight leading-none">
-            Tangled Org
-          </span>
-          <span className="text-[9px] text-zinc-600 font-mono tracking-[0.12em] uppercase mt-0.5">
+    <aside
+      className={cn(
+        "group fixed left-0 top-0 h-screen z-50 flex flex-col overflow-x-hidden",
+        "w-14 hover:w-[220px] transition-[width] duration-200 ease-in-out",
+        "bg-[rgb(21,21,26)] border-r border-[rgba(230,230,230,0.08)]"
+      )}
+    >
+      {/* ── Logo ─────────────────────────────────────────── */}
+      <div className="flex items-center h-14 px-3.5 border-b border-[rgba(230,230,230,0.08)] min-w-[220px]">
+        <Shield
+          size={20}
+          strokeWidth={2}
+          className="flex-shrink-0 text-[#a5b4fc]"
+        />
+        <div className="ml-3 flex items-baseline gap-1.5">
+          <FadeText className="text-sm font-semibold text-[rgb(230,230,230)] tracking-tight">
+            HSB
+          </FadeText>
+          <FadeText className="text-[9px] text-[rgba(230,230,230,0.3)] font-mono tracking-[0.12em] uppercase">
             Governance
-          </span>
+          </FadeText>
         </div>
       </div>
 
-      <nav className="flex-1 px-2 py-3 overflow-y-auto">
-        {navGroups.map((group, gi) => {
-          const isActive = (href: string) =>
-            href === "/" ? pathname === "/" : pathname.startsWith(href);
+      {/* ── Navigation ───────────────────────────────────── */}
+      <nav className="flex-1 py-2 overflow-y-auto">
+        {NAV_GROUPS.map((group, gi) => (
+          <div key={gi} className={gi > 0 ? "mt-2" : ""}>
+            {group.label && (
+              <div className="px-3.5 pt-3 pb-0.5 min-w-[220px]">
+                <FadeText className="text-[9px] text-[rgba(230,230,230,0.22)] uppercase tracking-[0.16em] font-semibold">
+                  {group.label}
+                </FadeText>
+              </div>
+            )}
 
-          return (
-            <div key={gi} className={gi > 0 ? "mt-4" : ""}>
-              {group.label && (
-                <div className="mb-1 px-3 pt-1">
-                  <span className="text-[9px] text-zinc-700 uppercase tracking-[0.15em] font-semibold">
-                    {group.label}
-                  </span>
-                </div>
-              )}
-              <ul className="space-y-0.5">
-                {group.items.map((item) => {
-                  const Icon = item.icon;
-                  const active = isActive(item.href);
-                  return (
-                    <li key={item.href}>
-                      <Link
-                        href={item.href}
+            <ul className="space-y-px">
+              {group.items.map((item) => {
+                const Icon = item.icon;
+                const active = isActive(item.href);
+
+                return (
+                  <li key={item.href}>
+                    <Link
+                      href={item.href}
+                      title={item.label}
+                      className={cn(
+                        "relative flex items-center h-10 px-3.5 min-w-[220px] transition-colors",
+                        active
+                          ? "bg-[rgba(230,230,230,0.07)]"
+                          : "hover:bg-[rgba(230,230,230,0.04)]"
+                      )}
+                    >
+                      {/* Active left-bar */}
+                      {active && (
+                        <span
+                          className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r-full"
+                          style={{ backgroundColor: item.color }}
+                        />
+                      )}
+
+                      <Icon
+                        size={17}
+                        strokeWidth={active ? 2 : 1.5}
+                        className="flex-shrink-0 transition-opacity"
+                        style={{
+                          color: item.color,
+                          opacity: active ? 1 : 0.65,
+                        }}
+                      />
+
+                      <FadeText
                         className={cn(
-                          "flex items-center gap-2.5 py-1.5 pr-3 text-sm transition-colors group",
+                          "ml-3 text-[13px] font-medium",
                           active
-                            ? "border-l-2 border-blue-400 pl-[9px] text-zinc-100 bg-zinc-800/50"
-                            : "border-l-2 border-transparent pl-[9px] text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/30"
+                            ? "text-[rgb(230,230,230)]"
+                            : "text-[rgba(230,230,230,0.6)]"
                         )}
                       >
-                        <Icon
-                          size={14}
-                          strokeWidth={active ? 2 : 1.5}
-                          className={cn(
-                            "flex-shrink-0",
-                            active ? "text-blue-400" : "text-zinc-600 group-hover:text-zinc-400"
-                          )}
-                        />
-                        <span className="font-medium text-[13px]">{item.label}</span>
-                      </Link>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          );
-        })}
-
-        <div className="mt-4 mb-1 px-3 pt-1">
-          <span className="text-[9px] text-zinc-700 uppercase tracking-[0.15em] font-semibold">
-            Organization
-          </span>
-        </div>
-        <div className="mx-2 px-3 py-2 border border-zinc-800 bg-zinc-900/40">
-          <div className="flex items-center gap-2">
-            <Building2 size={11} className="text-zinc-600 flex-shrink-0" />
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-medium text-zinc-300 truncate">{orgName || "No org"}</p>
-              <p className="text-[10px] text-zinc-600 font-mono truncate">{displayHandle}</p>
-            </div>
+                        {item.label}
+                      </FadeText>
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
           </div>
-        </div>
+        ))}
       </nav>
 
-      <div className="border-t border-zinc-800 px-3 py-3">
+      {/* ── User footer ──────────────────────────────────── */}
+      <div className="border-t border-[rgba(230,230,230,0.08)] px-3 py-3 min-w-[220px]">
         <div className="flex items-center gap-2.5">
-          <Avatar displayName={shortHandle} size="sm" />
-          <div className="flex-1 min-w-0">
-            <p className="text-xs font-medium text-zinc-300 truncate">{shortHandle}</p>
-            <p className="text-[10px] text-zinc-600 font-mono truncate">{displayHandle}</p>
+          <div className="flex-shrink-0">
+            <Avatar displayName={shortHandle} size="sm" />
           </div>
+
+          <div className="flex-1 min-w-0 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+            <p className="text-xs font-medium text-[rgba(230,230,230,0.8)] truncate">
+              {shortHandle}
+            </p>
+            <p className="text-[10px] text-[rgba(230,230,230,0.3)] font-mono truncate">
+              {displayHandle}
+            </p>
+          </div>
+
           <button
             onClick={handleLogout}
-            className="text-zinc-600 hover:text-zinc-400 transition-colors flex-shrink-0"
             title="Sign out"
+            className="flex-shrink-0 text-[rgba(230,230,230,0.3)] hover:text-[rgba(230,230,230,0.7)] opacity-0 group-hover:opacity-100 transition-all duration-150"
           >
             <LogOut size={13} />
           </button>
