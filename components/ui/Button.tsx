@@ -7,11 +7,16 @@ interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const variantClasses = {
-  primary: "bg-blue-600 hover:bg-blue-500 text-white border border-blue-500/50 shadow-sm",
-  secondary: "bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/50",
-  ghost: "bg-transparent hover:bg-zinc-800/60 text-zinc-400 hover:text-zinc-200 border border-transparent",
-  danger: "bg-red-600/80 hover:bg-red-600 text-white border border-red-500/50",
-  outline: "bg-transparent hover:bg-zinc-800 text-zinc-300 border border-zinc-700 hover:border-zinc-600",
+  primary:
+    "bg-[#8b5cf6] hover:bg-[#a78bfa] text-white border border-[rgba(167,139,250,0.4)] shadow-sm",
+  secondary:
+    "bg-[var(--card-bg)] hover:bg-[var(--hover-bg)] text-[var(--text-secondary)] border border-[var(--border-subtle)]",
+  ghost:
+    "bg-transparent hover:bg-[var(--hover-bg)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-transparent",
+  danger:
+    "bg-[rgba(239,68,68,0.15)] hover:bg-[rgba(239,68,68,0.25)] text-[#fca5a5] border border-[rgba(239,68,68,0.3)]",
+  outline:
+    "bg-transparent hover:bg-[var(--hover-bg)] text-[var(--text-primary)] border border-[var(--border-subtle)]",
 };
 
 const sizeClasses = {
@@ -20,11 +25,19 @@ const sizeClasses = {
   lg: "px-5 py-2.5 text-base rounded-md",
 };
 
-export function Button({ variant = "secondary", size = "md", className, children, ...props }: ButtonProps) {
+export function Button({
+  variant = "secondary",
+  size = "md",
+  className,
+  children,
+  ...props
+}: ButtonProps) {
   return (
     <button
       className={cn(
-        "inline-flex items-center gap-1.5 font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 disabled:pointer-events-none",
+        "inline-flex items-center gap-1.5 font-medium transition-colors",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(167,139,250,0.5)]",
+        "disabled:opacity-50 disabled:pointer-events-none",
         variantClasses[variant],
         sizeClasses[size],
         className

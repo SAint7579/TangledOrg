@@ -2,8 +2,35 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── HSB Design Tokens ─────────────────────────────────────── */
 :root {
-  --sidebar-width: 240px;
+  --sidebar-w: 56px;
+  --sidebar-expanded: 220px;
+
+  /* Light mode */
+  --bg-main: rgb(230, 230, 230);
+  --text-primary: rgb(21, 21, 26);
+  --text-secondary: rgba(21, 21, 26, 0.6);
+  --text-muted: rgba(21, 21, 26, 0.35);
+  --border-subtle: rgba(21, 21, 26, 0.1);
+  --card-bg: rgba(255, 255, 255, 0.55);
+  --header-bg: rgba(230, 230, 230, 0.92);
+  --table-head-bg: rgba(21, 21, 26, 0.04);
+  --hover-bg: rgba(21, 21, 26, 0.05);
+  --input-bg: rgba(255, 255, 255, 0.8);
+}
+
+.dark {
+  --bg-main: rgb(21, 21, 26);
+  --text-primary: rgb(230, 230, 230);
+  --text-secondary: rgba(230, 230, 230, 0.55);
+  --text-muted: rgba(230, 230, 230, 0.25);
+  --border-subtle: rgba(230, 230, 230, 0.1);
+  --card-bg: transparent;
+  --header-bg: rgba(21, 21, 26, 0.92);
+  --table-head-bg: rgba(230, 230, 230, 0.03);
+  --hover-bg: rgba(230, 230, 230, 0.04);
+  --input-bg: rgba(230, 230, 230, 0.05);
 }
 
 * {
@@ -19,69 +46,79 @@ html {
 }
 
 body {
-  background-color: #09090b; /* zinc-950 */
-  color: #e4e4e7; /* zinc-200 */
-  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  background-color: var(--bg-main);
+  color: var(--text-primary);
+  font-family: "Tahoma", "Geneva", "Verdana", sans-serif;
 }
 
-/* Custom scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
+/* ── Custom scrollbar ──────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(128, 128, 128, 0.3); border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(128, 128, 128, 0.5); }
 
-::-webkit-scrollbar-track {
-  background: transparent;
-}
+::selection { background: rgba(167, 139, 250, 0.3); color: inherit; }
+:focus-visible { outline: 2px solid rgba(167, 139, 250, 0.5); outline-offset: 2px; }
 
-::-webkit-scrollbar-thumb {
-  background: #3f3f46; /* zinc-700 */
-  border-radius: 9999px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #52525b; /* zinc-600 */
-}
-
-/* Selection */
-::selection {
-  background: rgba(59, 130, 246, 0.3);
-  color: #eff6ff;
-}
-
-/* Focus visible */
-:focus-visible {
-  outline: 2px solid rgba(59, 130, 246, 0.5);
-  outline-offset: 2px;
-}
-
-/* Monospace utility */
 .font-mono {
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Courier New", monospace;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, "Courier New", monospace;
 }
 
-/* Diff line colors */
-.diff-add {
-  background-color: rgba(34, 197, 94, 0.08);
-  border-left: 2px solid rgba(34, 197, 94, 0.4);
-}
+/* ── Diff lines ─────────────────────────────────────────────── */
+.diff-add    { background-color: rgba(34, 197, 94, 0.08);  border-left: 2px solid rgba(34, 197, 94, 0.4); }
+.diff-remove { background-color: rgba(239, 68, 68, 0.08);  border-left: 2px solid rgba(239, 68, 68, 0.4); }
+.diff-context { color: var(--text-muted); }
 
-.diff-remove {
-  background-color: rgba(239, 68, 68, 0.08);
-  border-left: 2px solid rgba(239, 68, 68, 0.4);
-}
-
-.diff-context {
-  color: #71717a; /* zinc-500 */
-}
-
-/* Animate fade in */
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in { animation: fadeIn 0.2s ease-out; }
+
+/* ── hsb-main: light-mode overrides for legacy zinc classes ── */
+
+/* Borders */
+html:not(.dark) .hsb-main .border-zinc-800,
+html:not(.dark) .hsb-main .border-zinc-800\/70 {
+  border-color: rgba(21, 21, 26, 0.1) !important;
+}
+html:not(.dark) .hsb-main .divide-zinc-800\/60 > * + * {
+  border-color: rgba(21, 21, 26, 0.07) !important;
 }
 
-.animate-fade-in {
-  animation: fadeIn 0.2s ease-out;
+/* Backgrounds */
+html:not(.dark) .hsb-main .bg-zinc-950,
+html:not(.dark) .hsb-main .bg-zinc-900\/40 {
+  background-color: rgba(255, 255, 255, 0.55) !important;
 }
+html:not(.dark) .hsb-main .bg-zinc-900\/60 {
+  background-color: rgba(21, 21, 26, 0.04) !important;
+}
+html:not(.dark) .hsb-main .bg-zinc-800\/30 { background-color: rgba(21, 21, 26, 0.04) !important; }
+html:not(.dark) .hsb-main .bg-zinc-800\/50 { background-color: rgba(21, 21, 26, 0.06) !important; }
+html:not(.dark) .hsb-main .hover\:bg-zinc-800\/30:hover { background-color: rgba(21, 21, 26, 0.05) !important; }
+
+/* Text */
+html:not(.dark) .hsb-main .text-zinc-100 { color: rgba(21, 21, 26, 0.92) !important; }
+html:not(.dark) .hsb-main .text-zinc-200 { color: rgba(21, 21, 26, 0.8)  !important; }
+html:not(.dark) .hsb-main .text-zinc-300 { color: rgba(21, 21, 26, 0.65) !important; }
+html:not(.dark) .hsb-main .text-zinc-400 { color: rgba(21, 21, 26, 0.5)  !important; }
+html:not(.dark) .hsb-main .text-zinc-500 { color: rgba(21, 21, 26, 0.38) !important; }
+html:not(.dark) .hsb-main .text-zinc-600 { color: rgba(21, 21, 26, 0.28) !important; }
+html:not(.dark) .hsb-main .text-zinc-700 { color: rgba(21, 21, 26, 0.18) !important; }
+
+/* Links */
+html:not(.dark) .hsb-main .text-blue-400 { color: #6366f1 !important; }
+html:not(.dark) .hsb-main .hover\:text-blue-300:hover { color: #818cf8 !important; }
+
+/* ── hsb-main: dark-mode minimalistic border overrides ──────── */
+.dark .hsb-main .border-zinc-800,
+.dark .hsb-main .border-zinc-800\/70 {
+  border-color: rgba(230, 230, 230, 0.1) !important;
+}
+.dark .hsb-main .divide-zinc-800\/60 > * + * {
+  border-color: rgba(230, 230, 230, 0.07) !important;
+}
+.dark .hsb-main .bg-zinc-900\/40 { background-color: transparent !important; }
+.dark .hsb-main .bg-zinc-900\/60 { background-color: rgba(230, 230, 230, 0.025) !important; }
