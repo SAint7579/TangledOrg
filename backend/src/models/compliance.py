@@ -186,6 +186,30 @@ class ImpactAssessment(ATProtoRecord):
     created_at: datetime = Field(..., alias="createdAt")
 
 
+class ScanRecord(ATProtoRecord):
+    """sh.tangled.governance.compliance.scanResult
+
+    Stores the full result of an AI compliance scan on a repository.
+    """
+
+    COLLECTION: ClassVar[str] = f"{NAMESPACE_PREFIX}.compliance.scanResult"
+
+    repo: str = Field(..., description="AT-URI of the repo")
+    risk_level: Severity = Field(..., alias="riskLevel")
+    summary: str = Field(..., max_length=5000)
+    policy_pack: str = Field(..., alias="policyPack", description="Display name of the policy pack")
+    files_scanned: int = Field(0, alias="filesScanned")
+    controls_passed: int = Field(0, alias="controlsPassed")
+    controls_failed: int = Field(0, alias="controlsFailed")
+    controls_warning: int = Field(0, alias="controlsWarning")
+    findings_count: int = Field(0, alias="findingsCount")
+    findings_json: Optional[str] = Field(None, alias="findingsJson", max_length=50000)
+    issues_created: int = Field(0, alias="issuesCreated")
+    duration_ms: Optional[int] = Field(None, alias="durationMs")
+    error: Optional[str] = Field(None, max_length=2000)
+    created_at: datetime = Field(..., alias="createdAt")
+
+
 class DownstreamAction(ATProtoRecord):
     repo: str
     issue: str = Field(..., description="AT-URI of auto-created issue")

@@ -229,6 +229,30 @@ export async function runAgent(payload: AgentRunRequest): Promise<AgentRunResult
   return apiPost<AgentRunResult>("/api/agent/run", payload);
 }
 
+// ── Scan History ─────────────────────────────────────────────────────────────
+
+export interface ScanHistoryItem {
+  id: string;
+  uri: string;
+  riskLevel: string;
+  summary: string;
+  policyPack: string;
+  filesScanned: number;
+  controlsPassed: number;
+  controlsFailed: number;
+  controlsWarning: number;
+  findingsCount: number;
+  findings: ScanFinding[];
+  issuesCreated: number;
+  durationMs: number | null;
+  error: string | null;
+  createdAt: string;
+}
+
+export async function fetchRepoScans(rkey: string): Promise<{ scans: ScanHistoryItem[] } | null> {
+  return apiFetch<{ scans: ScanHistoryItem[] }>(`/api/repos/${rkey}/scans`);
+}
+
 // ── Agent Scan ───────────────────────────────────────────────────────────────
 
 export interface ScanFinding {

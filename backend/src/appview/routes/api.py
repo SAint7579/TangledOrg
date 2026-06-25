@@ -837,6 +837,53 @@ async def run_scan(body: ScanRequest, request: Request):
     }
 
 
+@router.get("/repos/{rkey}/scans")
+async def list_repo_scans(rkey: str, request: Request):
+    """List scan history for a repo, most recent first."""
+    get_authenticated_session(request)
+    session = _get_org_session()
+    scans = _list_records(session, "sh.tangled.governance.compliance.scanResult")
+    repos = _list_records(session, "sh.tangled.repo")
+
+    repo_uri = ""
+    for r in repos:
+        if r["rkey"] == rkey:
+            repo_uri = r["uri"]
+            break
+
+    result = []
+    for s in scans:
+        val = s["value"]
+        if val.get("repo") != repo_uri:
+            continue
+        findings = []
+        if val.get("findingsJson"):
+            try:
+                findings = __import__("json").loads(val["findingsJson"])
+            except Exception:
+                pass
+        result.append({
+            "id": s["rkey"],
+            "uri": s["uri"],
+            "riskLevel": val.get("riskLevel", "low"),
+            "summary": val.get("summary", ""),
+            "policyPack": val.get("policyPack", ""),
+            "filesScanned": val.get("filesScanned", 0),
+            "controlsPassed": val.get("controlsPassed", 0),
+            "controlsFailed": val.get("controlsFailed", 0),
+            "controlsWarning": val.get("controlsWarning", 0),
+            "findingsCount": val.get("findingsCount", 0),
+            "findings": findings,
+            "issuesCreated": val.get("issuesCreated", 0),
+            "durationMs": val.get("durationMs"),
+            "error": val.get("error"),
+            "createdAt": val.get("createdAt", ""),
+        })
+
+    result.sort(key=lambda x: x.get("createdAt", ""), reverse=True)
+    return {"scans": result}
+
+
 class IncidentCreate(BaseModel):
     title: str
     description: str
@@ -896,6 +943,7 @@ async def list_audit(request: Request):
     evidence = _list_records(session, "sh.tangled.governance.audit.evidence")
     waivers = _list_records(session, "sh.tangled.governance.audit.waiver")
     incidents = _list_records(session, "sh.tangled.governance.compliance.incident")
+    scan_records = _list_records(session, "sh.tangled.governance.compliance.scanResult")
 
     repos = _list_records(session, "sh.tangled.repo")
     repo_uri_to_name: dict[str, str] = {}
@@ -962,6 +1010,30 @@ async def list_audit(request: Request):
                 "severity": v.get("severity", ""),
                 "category": v.get("category", ""),
                 "status": v.get("status", ""),
+            },
+            **v,
+        })
+
+    for sc in scan_records:
+        v = sc["value"]
+        repo_name = repo_uri_to_name.get(v.get("repo", ""), "")
+        risk = v.get("riskLevel", "low")
+        passed = v.get("controlsPassed", 0)
+        failed = v.get("controlsFailed", 0)
+        warning = v.get("controlsWarning", 0)
+        entries.append({
+            "id": sc["rkey"], "type": "scan", "uri": sc["uri"],
+            "description": f"AI code review on {repo_name}: {v.get('findingsCount', 0)} findings, risk {risk}",
+            "targetLabel": repo_name,
+            "createdAt": v.get("createdAt", ""),
+            "metadata": {
+                "risk": risk,
+                "passed": passed,
+                "failed": failed,
+                "warning": warning,
+                "files": v.get("filesScanned", 0),
+                "issues": v.get("issuesCreated", 0),
+                "duration": f"{v.get('durationMs', 0)}ms" if v.get("durationMs") else None,
             },
             **v,
         })

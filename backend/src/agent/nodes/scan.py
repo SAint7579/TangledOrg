@@ -489,6 +489,44 @@ def report_findings(state: ScanState) -> ScanState:
 
 
 # ---------------------------------------------------------------------------
+# Node 6: save_scan_record
+# ---------------------------------------------------------------------------
+
+
+def save_scan_record(state: ScanState) -> ScanState:
+    """Persist the scan results as a ScanRecord for history/audit."""
+    try:
+        from src.models import ScanRecord
+
+        client = get_client()
+        duration_ms = int((time.time() - state.started) * 1000)
+        risk = state.risk_level if state.risk_level in ("critical", "high", "medium", "low") else "low"
+
+        record = ScanRecord(
+            repo=state.repo_uri,
+            risk_level=risk,
+            summary=state.summary[:5000] if state.summary else "Scan completed.",
+            policy_pack=state.policy_pack_name or "Unknown",
+            files_scanned=state.files_scanned,
+            controls_passed=state.controls_passed,
+            controls_failed=state.controls_failed,
+            controls_warning=state.controls_warning,
+            findings_count=len(state.findings),
+            findings_json=json.dumps(state.findings[:50], default=str)[:50000] if state.findings else None,
+            issues_created=len(state.issues_created),
+            duration_ms=duration_ms,
+            error=state.error,
+            created_at=datetime.now(timezone.utc),
+        )
+        client.create_governance_record(record)
+    except Exception as exc:  # noqa: BLE001
+        if not state.error:
+            state.error = f"save_scan_record: {exc}"
+
+    return state
+
+
+# ---------------------------------------------------------------------------
 # Graph assembly
 # ---------------------------------------------------------------------------
 
@@ -500,13 +538,15 @@ if _LANGGRAPH_AVAILABLE:
     _builder.add_node("read_files", read_files)
     _builder.add_node("evaluate_compliance", evaluate_compliance)
     _builder.add_node("report_findings", report_findings)
+    _builder.add_node("save_scan_record", save_scan_record)
 
     _builder.add_edge(START, "load_context")
     _builder.add_edge("load_context", "collect_files")
     _builder.add_edge("collect_files", "read_files")
     _builder.add_edge("read_files", "evaluate_compliance")
     _builder.add_edge("evaluate_compliance", "report_findings")
-    _builder.add_edge("report_findings", END)
+    _builder.add_edge("report_findings", "save_scan_record")
+    _builder.add_edge("save_scan_record", END)
 
     scan_graph = _builder.compile()
 else:

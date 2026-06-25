@@ -4,8 +4,8 @@ import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import {
   Shield, Lock, FileText, Settings, AlertCircle,
-  Code2, GitPullRequest, Folder, File, ChevronRight,
-  ScanSearch, Loader2, CheckCircle2, XCircle, AlertTriangle,
+  Code2, GitPullRequest, Folder, File, ChevronRight, ChevronDown,
+  ScanSearch, Loader2, CheckCircle2, XCircle, AlertTriangle, Clock,
 } from "lucide-react";
 import { Shell } from "@/components/layout/Shell";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -13,9 +13,9 @@ import { Badge } from "@/components/ui/Badge";
 import { RiskBadge } from "@/components/compliance/RiskBadge";
 import {
   fetchRepos, fetchRepoProfile, fetchPolicies, fetchIncidents,
-  fetchRepoIssues, fetchRepoPulls, fetchRepoTree, runScan,
+  fetchRepoIssues, fetchRepoPulls, fetchRepoTree, runScan, fetchRepoScans,
 } from "@/lib/api";
-import type { ScanResult } from "@/lib/api";
+import type { ScanResult, ScanHistoryItem } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 type Tab = "code" | "issues" | "pulls" | "compliance" | "policies" | "scan";
@@ -55,6 +55,8 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [scanRunning, setScanRunning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [scanHistory, setScanHistory] = useState<ScanHistoryItem[]>([]);
+  const [expandedScanId, setExpandedScanId] = useState<string | null>(null);
 
   useEffect(() => {
     const rkey = params.repo;
@@ -93,6 +95,16 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
     }
   }, [loading, activeTab, treeEntries.length, loadTree]);
 
+  const loadScanHistory = useCallback(() => {
+    fetchRepoScans(params.repo).then((data) => {
+      setScanHistory(data?.scans || []);
+    });
+  }, [params.repo]);
+
+  useEffect(() => {
+    if (activeTab === "scan") loadScanHistory();
+  }, [activeTab, loadScanHistory]);
+
   const handleScan = useCallback(async () => {
     setScanRunning(true);
     setScanError(null);
@@ -108,6 +120,7 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
         return;
       }
       setScanResult(result);
+      loadScanHistory();
       if (result.issues_created?.length) {
         fetchRepoIssues(params.repo).then((data) => setIssues(data?.issues || []));
       }
@@ -677,8 +690,8 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
                   </>
                 )}
 
-                {/* Empty state */}
-                {!scanResult && !scanRunning && !scanError && (
+                {/* Empty state (no current result and no history) */}
+                {!scanResult && !scanRunning && !scanError && scanHistory.length === 0 && (
                   <Card>
                     <div className="text-center py-12">
                       <ScanSearch size={40} className="text-zinc-700 mx-auto mb-4" />
@@ -690,6 +703,125 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
                       </p>
                     </div>
                   </Card>
+                )}
+
+                {/* Scan history */}
+                {scanHistory.length > 0 && (
+                  <div className="space-y-2">
+                    <h3 className="text-sm font-medium text-zinc-400 flex items-center gap-2">
+                      <Clock size={13} />
+                      Scan History ({scanHistory.length})
+                    </h3>
+                    {scanHistory.map((scan) => {
+                      const isExpanded = expandedScanId === scan.id;
+                      const date = scan.createdAt
+                        ? new Date(scan.createdAt).toLocaleString()
+                        : "Unknown date";
+
+                      return (
+                        <div key={scan.id} className="border border-zinc-800 rounded overflow-hidden">
+                          <button
+                            onClick={() => setExpandedScanId(isExpanded ? null : scan.id)}
+                            className="w-full flex items-center gap-3 px-4 py-3 hover:bg-zinc-800/30 transition-colors text-left"
+                          >
+                            {isExpanded ? (
+                              <ChevronDown size={14} className="text-zinc-500 flex-shrink-0" />
+                            ) : (
+                              <ChevronRight size={14} className="text-zinc-500 flex-shrink-0" />
+                            )}
+                            <RiskBadge tier={scan.riskLevel as any} size="sm" />
+                            <span className="text-xs text-zinc-300 flex-1 truncate">
+                              {scan.findingsCount} findings &middot; {scan.filesScanned} files scanned
+                            </span>
+                            <span className="text-[10px] font-mono text-zinc-600 flex-shrink-0">
+                              {date}
+                            </span>
+                            {scan.durationMs && (
+                              <span className="text-[10px] font-mono text-zinc-700 flex-shrink-0">
+                                {(scan.durationMs / 1000).toFixed(1)}s
+                              </span>
+                            )}
+                          </button>
+
+                          {isExpanded && (
+                            <div className="border-t border-zinc-800 bg-zinc-900/50 px-4 py-4 space-y-4">
+                              {/* Summary */}
+                              <div>
+                                <p className="text-xs text-zinc-500 mb-1">Policy: {scan.policyPack}</p>
+                                <p className="text-sm text-zinc-300">{scan.summary}</p>
+                              </div>
+
+                              {/* Stats */}
+                              <div className="grid grid-cols-3 gap-3">
+                                <div className="flex items-center gap-2 p-2 bg-green-950/30 border border-green-900/30 rounded">
+                                  <CheckCircle2 size={13} className="text-green-400" />
+                                  <div>
+                                    <p className="text-sm font-bold text-green-400">{scan.controlsPassed}</p>
+                                    <p className="text-[9px] text-zinc-500">Passed</p>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2 p-2 bg-yellow-950/30 border border-yellow-900/30 rounded">
+                                  <AlertTriangle size={13} className="text-yellow-400" />
+                                  <div>
+                                    <p className="text-sm font-bold text-yellow-400">{scan.controlsWarning}</p>
+                                    <p className="text-[9px] text-zinc-500">Warnings</p>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2 p-2 bg-red-950/30 border border-red-900/30 rounded">
+                                  <XCircle size={13} className="text-red-400" />
+                                  <div>
+                                    <p className="text-sm font-bold text-red-400">{scan.controlsFailed}</p>
+                                    <p className="text-[9px] text-zinc-500">Failed</p>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Findings */}
+                              {scan.findings && scan.findings.length > 0 && (
+                                <div className="divide-y divide-zinc-800/60">
+                                  {scan.findings.map((f, fi) => {
+                                    const sevColor = {
+                                      critical: "text-red-400",
+                                      high: "text-orange-400",
+                                      medium: "text-yellow-400",
+                                      low: "text-blue-400",
+                                    }[f.severity] || "text-zinc-400";
+
+                                    return (
+                                      <div key={fi} className="py-2 first:pt-0 last:pb-0">
+                                        <div className="flex items-start gap-2">
+                                          <span className={cn("text-[10px] font-bold uppercase", sevColor)}>
+                                            {f.severity}
+                                          </span>
+                                          <div className="flex-1 min-w-0">
+                                            <p className="text-xs text-zinc-200">{f.title}</p>
+                                            <p className="text-[10px] text-zinc-500 font-mono mt-0.5">
+                                              {f.file}{f.line ? `:${f.line}` : ""}
+                                              <span className="ml-2 text-zinc-600">{f.control_id}</span>
+                                            </p>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+
+                              {scan.issuesCreated > 0 && (
+                                <p className="text-[10px] text-zinc-600">
+                                  {scan.issuesCreated} issues auto-created
+                                </p>
+                              )}
+
+                              {scan.error && (
+                                <p className="text-xs text-yellow-400/70">{scan.error}</p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
               </div>
             )}

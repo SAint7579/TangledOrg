@@ -10,6 +10,7 @@ from src.models.compliance import (
     MergeGate,
     ImpactAssessment,
     Propagation,
+    ScanRecord,
 )
 from src.models.policy import PolicyPack, Control, RepoBinding, SLARule
 from src.models.graph import RepoDependency, ServiceDependency, CodeDependency
@@ -19,7 +20,7 @@ __all__ = [
     "Organization", "Membership", "Team", "Role",
     "RepoProfile", "CodeOwner", "Incident", "SLATracker",
     "PRAssessment", "ControlEvaluation", "RequiredApproval", "MergeGate",
-    "ImpactAssessment", "Propagation",
+    "ImpactAssessment", "Propagation", "ScanRecord",
     "PolicyPack", "Control", "RepoBinding", "SLARule",
     "RepoDependency", "ServiceDependency", "CodeDependency",
     "Evidence", "AgentRun", "Waiver",
