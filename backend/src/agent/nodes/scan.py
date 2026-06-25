@@ -19,7 +19,7 @@ import json
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Callable, Optional
 
 import httpx
 
@@ -106,6 +106,7 @@ class ScanState:
     started: float = field(default_factory=time.time)
     error: Optional[str] = None
     files_scanned: int = 0
+    progress_callback: Optional[Callable[[str], None]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -113,8 +114,14 @@ class ScanState:
 # ---------------------------------------------------------------------------
 
 
+def _notify(state, msg: str):
+    if state.progress_callback:
+        state.progress_callback(msg)
+
+
 def load_context(state: ScanState) -> ScanState:
     """Load repo metadata, compliance profile, and bound policy controls."""
+    _notify(state, "Loading repo context...")
     try:
         client = get_client()
 
@@ -217,7 +224,7 @@ def collect_files(state: ScanState) -> ScanState:
     """Walk the repo tree and collect source file paths."""
     if state.error:
         return state
-
+    _notify(state, "Collecting files...")
     try:
         all_files: list[str] = []
         dirs_to_visit = [""]
@@ -255,7 +262,7 @@ def read_files(state: ScanState) -> ScanState:
     """Read file contents from the knot blob endpoint."""
     if state.error:
         return state
-
+    _notify(state, "Reading source files...")
     total_bytes = 0
     contents: dict[str, str] = {}
 
@@ -368,7 +375,7 @@ def evaluate_compliance(state: ScanState) -> ScanState:
     """Send code + controls to Claude for structured compliance evaluation."""
     if state.error:
         return state
-
+    _notify(state, "Evaluating compliance (this may take 30-60s)...")
     if not state.file_contents:
         state.summary = "No source files found to scan."
         return state
@@ -448,7 +455,7 @@ def check_cross_repo(state: ScanState) -> ScanState:
     """Analyze dependency graph for cross-repo discrepancies and create issues in downstream repos."""
     if state.error and not state.findings:
         return state
-
+    _notify(state, "Checking cross-repo dependencies...")
     try:
         client = get_client()
         from src.models import RepoDependency, CodeDependency
@@ -638,7 +645,7 @@ def report_findings(state: ScanState) -> ScanState:
 
     if not state.findings:
         return state
-
+    _notify(state, "Creating issues and incidents...")
     try:
         from src.agent.tools.tangled import _repo_did_for_rkey, _create_native_record
 
@@ -723,6 +730,7 @@ def report_findings(state: ScanState) -> ScanState:
 
 def save_scan_record(state: ScanState) -> ScanState:
     """Persist the scan results as a ScanRecord for history/audit."""
+    _notify(state, "Saving scan record...")
     try:
         from src.models import ScanRecord
 

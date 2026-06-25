@@ -8,7 +8,9 @@ checked for authentication — you must be logged in — but the actual PDS
 I/O goes through the org owner's credentials.
 """
 
+import threading
 import time
+import uuid
 from datetime import datetime, timezone
 from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel
@@ -70,6 +72,71 @@ def _dpop_post_resource(
         no_redirect.close()
 
 router = APIRouter(prefix="/api", tags=["api"])
+
+
+# ── Background task store ──────────────────────────────────────────────────────
+
+_tasks: dict[str, dict] = {}
+_TASK_TTL = 600  # 10 minutes
+
+
+def _create_task(task_type: str) -> str:
+    """Create a new background task entry and return its id."""
+    # Purge stale completed tasks
+    now = time.time()
+    stale = [k for k, v in _tasks.items() if v["status"] != "running" and now - v["created"] > _TASK_TTL]
+    for k in stale:
+        del _tasks[k]
+
+    task_id = uuid.uuid4().hex[:12]
+    _tasks[task_id] = {
+        "status": "running",
+        "progress": "Starting...",
+        "result": None,
+        "error": None,
+        "created": now,
+        "type": task_type,
+    }
+    return task_id
+
+
+def _update_progress(task_id: str, message: str):
+    """Update the progress message for a running task."""
+    if task_id in _tasks:
+        _tasks[task_id]["progress"] = message
+
+
+def _complete_task(task_id: str, result: dict):
+    """Mark a task as completed with its result."""
+    if task_id in _tasks:
+        _tasks[task_id]["status"] = "completed"
+        _tasks[task_id]["result"] = result
+        _tasks[task_id]["progress"] = "Done"
+
+
+def _fail_task(task_id: str, error: str):
+    """Mark a task as failed with an error message."""
+    if task_id in _tasks:
+        _tasks[task_id]["status"] = "failed"
+        _tasks[task_id]["error"] = error
+        _tasks[task_id]["progress"] = "Failed"
+
+
+@router.get("/tasks/{task_id}")
+async def get_task_status(task_id: str, request: Request):
+    """Poll the status of a background AI task."""
+    get_authenticated_session(request)
+    task = _tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {
+        "taskId": task_id,
+        "status": task["status"],
+        "progress": task["progress"],
+        "type": task["type"],
+        "result": task["result"],
+        "error": task["error"],
+    }
 
 
 # ── Org-owner session (app-password based) ────────────────────────────────────
@@ -914,9 +981,46 @@ class CreatePullRequest(BaseModel):
     targetBranch: str = "main"
 
 
+def _run_pr_compliance_worker(task_id: str, pr_uri: str, repo_uri: str, clone_url: str,
+                              source_branch: str, target_branch: str):
+    """Background thread that runs PR compliance checks."""
+    try:
+        from src.agent.nodes import ComplianceState, graph
+
+        if graph is None:
+            _fail_task(task_id, "Compliance graph not available")
+            return
+
+        def progress(msg: str):
+            _update_progress(task_id, msg)
+
+        state = ComplianceState(
+            pr_uri=pr_uri,
+            repo_uri=repo_uri,
+            repo_clone_url=clone_url,
+            pr_branch=source_branch,
+            base_branch=target_branch,
+            progress_callback=progress,
+        )
+        raw = graph.invoke(state)
+        r = raw if isinstance(raw, dict) else vars(raw)
+        _complete_task(task_id, {
+            "gate_status": r.get("gate_status", ""),
+            "gate_reason": r.get("gate_reason", ""),
+            "risk_level": r.get("risk_level", ""),
+            "summary": r.get("summary", ""),
+            "records_written": r.get("records_written", 0),
+            "pr_assessment_uri": r.get("pr_assessment_uri", ""),
+            "downstream_issues": r.get("downstream_issues_created", []),
+            "error": r.get("error"),
+        })
+    except Exception as exc:
+        _fail_task(task_id, str(exc)[:500])
+
+
 @router.post("/repos/{rkey}/pulls")
 async def create_pull_request(rkey: str, body: CreatePullRequest, request: Request):
-    """Create a pull request as a PDS record and run compliance checks."""
+    """Create a pull request as a PDS record and launch compliance checks in background."""
     get_authenticated_session(request)
     session = _get_org_session()
 
@@ -945,7 +1049,6 @@ async def create_pull_request(rkey: str, body: CreatePullRequest, request: Reque
     pr_uri = result.get("uri", "")
     pr_rkey = pr_uri.rsplit("/", 1)[-1] if "/" in pr_uri else ""
 
-    # Write an open status record
     _create_record(session, "sh.tangled.repo.pull.status", {
         "pull": pr_uri,
         "status": "sh.tangled.repo.pull.status.open",
@@ -954,37 +1057,21 @@ async def create_pull_request(rkey: str, body: CreatePullRequest, request: Reque
 
     log.info("PR created: rkey=%s branch=%s→%s", pr_rkey, body.sourceBranch, body.targetBranch)
 
-    # ── Auto-trigger compliance pipeline ─────────────────────────────
-    compliance_result = None
+    # Spawn compliance check in background
+    compliance_task_id = None
     try:
-        from src.agent.nodes import ComplianceState, graph
-
+        from src.agent.nodes import graph
         if graph is not None and knot:
-            import asyncio
-
             clone_url = f"https://tangled.sh/{handle}/{rkey}.git" if handle else f"https://{knot}/{owner_did}/{rkey}.git"
-            state = ComplianceState(
-                pr_uri=pr_uri,
-                repo_uri=repo_uri,
-                repo_clone_url=clone_url,
-                pr_branch=body.sourceBranch,
-                base_branch=body.targetBranch,
+            compliance_task_id = _create_task("pr_compliance")
+            thread = threading.Thread(
+                target=_run_pr_compliance_worker,
+                args=(compliance_task_id, pr_uri, repo_uri, clone_url, body.sourceBranch, body.targetBranch),
+                daemon=True,
             )
-            loop = asyncio.get_event_loop()
-            raw = await loop.run_in_executor(None, graph.invoke, state)
-            r = raw if isinstance(raw, dict) else vars(raw)
-            compliance_result = {
-                "gate_status": r.get("gate_status", ""),
-                "gate_reason": r.get("gate_reason", ""),
-                "risk_level": r.get("risk_level", ""),
-                "summary": r.get("summary", ""),
-                "records_written": r.get("records_written", 0),
-                "pr_assessment_uri": r.get("pr_assessment_uri", ""),
-            }
+            thread.start()
     except ImportError:
         pass
-    except Exception as exc:
-        compliance_result = {"error": str(exc)}
 
     return {
         "uri": pr_uri,
@@ -993,7 +1080,7 @@ async def create_pull_request(rkey: str, body: CreatePullRequest, request: Reque
         "sourceBranch": body.sourceBranch,
         "targetBranch": body.targetBranch,
         "status": "open",
-        "compliance": compliance_result,
+        "complianceTaskId": compliance_task_id,
     }
 
 
@@ -1344,40 +1431,10 @@ class ScanRequest(BaseModel):
     repo_rkey: str
 
 
-@router.post("/agent/scan")
-async def run_scan(body: ScanRequest, request: Request):
-    """Trigger a compliance scan on a repository's source code.
-
-    Reads the repo's bound policy pack and controls, fetches source files
-    from the knot server, evaluates them with Claude, and creates issues
-    for any violations found.
-    """
-    get_authenticated_session(request)  # auth check
-
-    try:
-        from src.agent.nodes.scan import ScanState, scan_graph
-    except ImportError:
-        raise HTTPException(
-            status_code=503,
-            detail="Agent dependencies not installed. Run: pip install 'tangled-org[agent]'",
-        )
-
-    if scan_graph is None:
-        raise HTTPException(
-            status_code=503,
-            detail="LangGraph not available. Run: pip install 'tangled-org[agent]'",
-        )
-
-    import asyncio
-
-    initial = ScanState(repo_rkey=body.repo_rkey)
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(None, scan_graph.invoke, initial)
-
-    # LangGraph returns a dict keyed by field name
-    r = result if isinstance(result, dict) else vars(result)
+def _scan_result_from_state(r: dict, repo_rkey: str) -> dict:
+    """Extract a ScanResult dict from a LangGraph state dict."""
     return {
-        "repo": r.get("repo_rkey", body.repo_rkey),
+        "repo": r.get("repo_rkey", repo_rkey),
         "risk_level": r.get("risk_level", "low"),
         "summary": r.get("summary", ""),
         "policy_pack": r.get("policy_pack_name", ""),
@@ -1393,6 +1450,51 @@ async def run_scan(body: ScanRequest, request: Request):
         "duration_ms": int((time.time() - r.get("started", time.time())) * 1000),
         "error": r.get("error"),
     }
+
+
+def _run_scan_worker(task_id: str, repo_rkey: str):
+    """Background thread that runs a compliance scan."""
+    try:
+        from src.agent.nodes.scan import ScanState, scan_graph
+
+        if scan_graph is None:
+            _fail_task(task_id, "LangGraph not available")
+            return
+
+        def progress(msg: str):
+            _update_progress(task_id, msg)
+
+        initial = ScanState(repo_rkey=repo_rkey, progress_callback=progress)
+        result = scan_graph.invoke(initial)
+        r = result if isinstance(result, dict) else vars(result)
+        scan_data = _scan_result_from_state(r, repo_rkey)
+
+        if scan_data.get("error") and not scan_data.get("findings"):
+            _fail_task(task_id, scan_data["error"])
+        else:
+            _complete_task(task_id, scan_data)
+    except Exception as exc:
+        _fail_task(task_id, str(exc)[:500])
+
+
+@router.post("/agent/scan")
+async def run_scan(body: ScanRequest, request: Request):
+    """Trigger a compliance scan as a background task. Returns a taskId for polling."""
+    get_authenticated_session(request)
+
+    try:
+        from src.agent.nodes.scan import scan_graph
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Agent dependencies not installed.")
+
+    if scan_graph is None:
+        raise HTTPException(status_code=503, detail="LangGraph not available.")
+
+    task_id = _create_task("scan")
+    thread = threading.Thread(target=_run_scan_worker, args=(task_id, body.repo_rkey), daemon=True)
+    thread.start()
+
+    return {"taskId": task_id, "status": "running"}
 
 
 @router.get("/repos/{rkey}/scans")

@@ -15,7 +15,7 @@ import {
   fetchRepos, fetchRepoProfile, fetchPolicies, fetchIncidents,
   fetchRepoIssues, fetchRepoPulls, fetchRepoTree, runScan, fetchRepoScans,
   fetchPRAssessment, fetchRepoBranches, createPullRequest,
-  closePullRequest, mergePullRequest,
+  closePullRequest, mergePullRequest, fetchTaskStatus,
 } from "@/lib/api";
 import type { ScanResult, ScanHistoryItem, PRAssessmentResponse, Branch } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -73,9 +73,13 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
   const [prAssessmentLoading, setPrAssessmentLoading] = useState<string | null>(null);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [scanRunning, setScanRunning] = useState(false);
+  const [scanProgress, setScanProgress] = useState("Starting...");
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanHistory, setScanHistory] = useState<ScanHistoryItem[]>([]);
   const [expandedScanId, setExpandedScanId] = useState<string | null>(null);
+  const [complianceTaskId, setComplianceTaskId] = useState<string | null>(null);
+  const [complianceProgress, setComplianceProgress] = useState("");
+  const [complianceRunningPR, setComplianceRunningPR] = useState<string | null>(null);
 
   useEffect(() => {
     const rkey = params.repo;
@@ -126,6 +130,9 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
     if (!createPRBranch || !createPRTitle) return;
     setCreatePRLoading(true);
     setCreatePRResult(null);
+    setComplianceTaskId(null);
+    setComplianceProgress("");
+    setComplianceRunningPR(null);
     try {
       const result = await createPullRequest(params.repo, {
         title: createPRTitle,
@@ -133,14 +140,54 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
         sourceBranch: createPRBranch,
         targetBranch: createPRTarget,
       });
+      if (!result) {
+        setCreatePRResult({ error: "Failed to create PR" });
+        setCreatePRLoading(false);
+        return;
+      }
       setCreatePRResult(result);
+      setCreatePRLoading(false);
       fetchRepoPulls(params.repo).then((data) => setPulls(data?.pulls || []));
       setCreatePRTitle("");
       setCreatePRBody("");
       setCreatePRBranch("");
+
+      if (result.complianceTaskId) {
+        setComplianceTaskId(result.complianceTaskId);
+        setComplianceProgress("Starting compliance check...");
+        setComplianceRunningPR(result.rkey);
+        const pollCompliance = async () => {
+          const status = await fetchTaskStatus(result.complianceTaskId!);
+          if (!status) {
+            setComplianceProgress("Lost connection.");
+            setComplianceTaskId(null);
+            setComplianceRunningPR(null);
+            return;
+          }
+          setComplianceProgress(status.progress || "Processing...");
+          if (status.status === "completed") {
+            setComplianceTaskId(null);
+            setComplianceProgress("");
+            setComplianceRunningPR(null);
+            fetchRepoPulls(params.repo).then((data) => setPulls(data?.pulls || []));
+            if (result.rkey) {
+              const assessment = await fetchPRAssessment(params.repo, result.rkey);
+              if (assessment) {
+                setPrAssessments((prev) => ({ ...prev, [result.rkey]: assessment }));
+              }
+            }
+          } else if (status.status === "failed") {
+            setComplianceProgress(`Failed: ${status.error || "Unknown error"}`);
+            setComplianceTaskId(null);
+            setComplianceRunningPR(null);
+          } else {
+            setTimeout(pollCompliance, 3000);
+          }
+        };
+        setTimeout(pollCompliance, 2000);
+      }
     } catch (err: any) {
       setCreatePRResult({ error: err?.message || "Failed to create PR" });
-    } finally {
       setCreatePRLoading(false);
     }
   }, [params.repo, createPRBranch, createPRTarget, createPRTitle, createPRBody]);
@@ -215,27 +262,45 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
     setScanRunning(true);
     setScanError(null);
     setScanResult(null);
+    setScanProgress("Starting...");
     try {
-      const result = await runScan(params.repo);
-      if (!result) {
+      const taskResponse = await runScan(params.repo);
+      if (!taskResponse?.taskId) {
         setScanError("Scan failed. The agent may not be configured.");
+        setScanRunning(false);
         return;
       }
-      if (result.error && !result.findings?.length) {
-        setScanError(result.error);
-        return;
-      }
-      setScanResult(result);
-      loadScanHistory();
-      if (result.issues_created?.length) {
-        fetchRepoIssues(params.repo).then((data) => setIssues(data?.issues || []));
-      }
+
+      const poll = async () => {
+        const status = await fetchTaskStatus(taskResponse.taskId);
+        if (!status) {
+          setScanError("Lost connection to scan task.");
+          setScanRunning(false);
+          return;
+        }
+        setScanProgress(status.progress || "Processing...");
+
+        if (status.status === "completed" && status.result) {
+          const result = status.result as unknown as ScanResult;
+          setScanResult(result);
+          setScanRunning(false);
+          loadScanHistory();
+          if (result.issues_created?.length) {
+            fetchRepoIssues(params.repo).then((data) => setIssues(data?.issues || []));
+          }
+        } else if (status.status === "failed") {
+          setScanError(status.error || "Scan failed.");
+          setScanRunning(false);
+        } else {
+          setTimeout(poll, 3000);
+        }
+      };
+      setTimeout(poll, 2000);
     } catch (err: any) {
       setScanError(err?.message || "Unknown error");
-    } finally {
       setScanRunning(false);
     }
-  }, [params.repo]);
+  }, [params.repo, loadScanHistory]);
 
   if (loading) {
     return (
@@ -552,7 +617,7 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
                           className="flex items-center gap-1.5 text-xs px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                         >
                           {createPRLoading ? (
-                            <><Loader2 size={12} className="animate-spin" /> Creating &amp; Running Checks...</>
+                            <><Loader2 size={12} className="animate-spin" /> Creating PR...</>
                           ) : (
                             <><GitPullRequest size={12} /> Create PR</>
                           )}
@@ -565,7 +630,7 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
                         </button>
                       </div>
 
-                      {/* Inline compliance result after PR creation */}
+                      {/* Inline result after PR creation */}
                       {createPRResult && (
                         <div className="mt-2 border border-zinc-800 rounded p-3 space-y-2">
                           {createPRResult.error ? (
@@ -573,41 +638,25 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
                           ) : (
                             <>
                               <div className="flex items-center gap-2">
-                                {createPRResult.warning ? (
-                                  <>
-                                    <AlertTriangle size={12} className="text-yellow-400" />
-                                    <span className="text-xs text-yellow-300">{createPRResult.warning}</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <CheckCircle2 size={12} className="text-green-400" />
-                                    <span className="text-xs text-green-300">PR created: {createPRResult.title}</span>
-                                  </>
-                                )}
+                                <CheckCircle2 size={12} className="text-green-400" />
+                                <span className="text-xs text-green-300">PR created: {createPRResult.title}</span>
                               </div>
-                              {createPRResult.compliance && (
-                                <div className="space-y-2 pl-5">
-                                  <div className="flex items-center gap-2">
-                                    <RiskBadge tier={createPRResult.compliance.risk_level as any} size="sm" />
-                                    <span className={cn(
-                                      "text-[9px] px-1.5 py-0.5 rounded font-mono font-semibold uppercase",
-                                      createPRResult.compliance.gate_status === "pass" ? "bg-green-500/10 text-green-400" :
-                                      createPRResult.compliance.gate_status === "warning" ? "bg-yellow-500/10 text-yellow-400" :
-                                      createPRResult.compliance.gate_status === "blocked" ? "bg-red-500/10 text-red-400" :
-                                      "bg-orange-500/10 text-orange-400"
-                                    )}>
-                                      {createPRResult.compliance.gate_status}
-                                    </span>
-                                  </div>
-                                  <p className="text-xs text-zinc-400">{createPRResult.compliance.summary}</p>
-                                  {createPRResult.compliance.gate_reason && (
-                                    <p className="text-[10px] text-zinc-600">{createPRResult.compliance.gate_reason}</p>
-                                  )}
-                                  <p className="text-[9px] text-zinc-700 italic">
-                                    Potential incidents shown above. They become real on merge.
-                                    Expand the PR below for full details.
-                                  </p>
+                              {complianceTaskId && (
+                                <div className="flex items-center gap-2 pl-5 mt-1">
+                                  <Loader2 size={12} className="text-blue-400 animate-spin" />
+                                  <span className="text-xs text-blue-300">{complianceProgress}</span>
                                 </div>
+                              )}
+                              {!complianceTaskId && complianceProgress && complianceProgress.startsWith("Failed") && (
+                                <div className="flex items-center gap-2 pl-5 mt-1">
+                                  <XCircle size={12} className="text-red-400" />
+                                  <span className="text-xs text-red-300">{complianceProgress}</span>
+                                </div>
+                              )}
+                              {!complianceTaskId && !complianceProgress && createPRResult.rkey && (
+                                <p className="text-[9px] text-zinc-600 italic pl-5 mt-1">
+                                  Compliance check complete. Expand the PR below for full details.
+                                </p>
                               )}
                             </>
                           )}
@@ -662,7 +711,13 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
                                 <Badge variant={statusVariant} size="sm">
                                   {pr.status}
                                 </Badge>
-                                {assessment?.gate && (
+                                {complianceRunningPR === pr.id && (
+                                  <span className="flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 font-mono animate-pulse">
+                                    <Loader2 size={9} className="animate-spin" />
+                                    compliance check...
+                                  </span>
+                                )}
+                                {assessment?.gate && !complianceRunningPR && (
                                   <span className={cn(
                                     "text-[9px] px-1.5 py-0.5 rounded font-mono font-semibold uppercase",
                                     assessment.gate.status === "pass" ? "bg-green-500/10 text-green-400" :
@@ -1116,7 +1171,10 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
                   <Card>
                     <div className="flex flex-col items-center py-8 gap-3">
                       <Loader2 size={32} className="text-blue-400 animate-spin" />
-                      <p className="text-sm text-zinc-400">Reading files and evaluating against policies...</p>
+                      <p className="text-sm text-zinc-400">{scanProgress}</p>
+                      <div className="w-full max-w-xs bg-zinc-800 rounded-full h-1.5 overflow-hidden">
+                        <div className="h-full bg-blue-500 rounded-full animate-pulse" style={{ width: "60%" }} />
+                      </div>
                       <p className="text-xs text-zinc-600">This may take 30-60 seconds depending on the repo size.</p>
                     </div>
                   </Card>

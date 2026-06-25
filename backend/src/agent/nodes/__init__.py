@@ -25,7 +25,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Callable, Optional
 
 try:
     from langchain_anthropic import ChatAnthropic
@@ -135,6 +135,17 @@ class ComplianceState:
     agent_run_started: float = field(default_factory=time.time)
     records_written: int = 0
     error: Optional[str] = None
+    progress_callback: Optional[Callable[[str], None]] = None
+
+
+# ---------------------------------------------------------------------------
+# Progress helper
+# ---------------------------------------------------------------------------
+
+
+def _notify(state, msg: str):
+    if state.progress_callback:
+        state.progress_callback(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +159,7 @@ def clone_diff(state: ComplianceState) -> ComplianceState:
     If repo_clone_url uses a DID-based path that fails, falls back to
     fetching file trees from the knot XRPC API to build the diff.
     """
+    _notify(state, "Cloning repo and computing diff...")
     import logging
     log = logging.getLogger("clone_diff")
 
@@ -352,6 +364,7 @@ def _xrpc_diff_fallback(state: ComplianceState) -> ComplianceState:
 
 def load_profile(state: ComplianceState) -> ComplianceState:
     """Read governance records from ATProto for this repo."""
+    _notify(state, "Loading compliance profile...")
     try:
         client = get_client()
         repo_uri = state.repo_uri
@@ -422,6 +435,7 @@ def load_profile(state: ComplianceState) -> ComplianceState:
 
 def map_owners(state: ComplianceState) -> ComplianceState:
     """Match changed files to code owner glob patterns."""
+    _notify(state, "Mapping code owners...")
     try:
         file_owner_map: dict[str, list[dict]] = {}
         owner_dids: set[str] = set()
@@ -530,6 +544,7 @@ def _run_osv_scanner(scan_dir: str) -> list[dict]:
 
 def run_scans(state: ComplianceState) -> ComplianceState:
     """Run security scanning tools against the cloned repo."""
+    _notify(state, "Running security scans...")
     scan_dir = state.clone_dir
     if not scan_dir or not os.path.isdir(scan_dir):
         # No clone available — skip scans
@@ -552,6 +567,7 @@ def run_scans(state: ComplianceState) -> ComplianceState:
 
 def check_deps(state: ComplianceState) -> ComplianceState:
     """Walk the dependency graph, fetch downstream code, and use AI to explain impact."""
+    _notify(state, "Analyzing dependency impact...")
     try:
         affected_edges: list[dict] = []
         downstream_repo_set: set[str] = set()
@@ -823,6 +839,7 @@ Evaluate this PR against each applicable control. Respond with JSON matching exa
 
 def claude_reason(state: ComplianceState) -> ComplianceState:
     """Send context to Claude for policy reasoning and structured evaluation."""
+    _notify(state, "Claude is evaluating compliance (this may take 30-60s)...")
     if not _LANGGRAPH_AVAILABLE:
         state.summary = "Claude reasoning skipped: langchain-anthropic not installed."
         state.risk_level = "medium"
@@ -880,6 +897,7 @@ def claude_reason(state: ComplianceState) -> ComplianceState:
 
 def decide_gate(state: ComplianceState) -> ComplianceState:
     """Aggregate control results into final merge gate verdict."""
+    _notify(state, "Deciding merge gate...")
     try:
         # Build a map of control URI → evaluation for quick lookup
         eval_by_uri = {e.get("control_uri", ""): e for e in state.control_evaluations}
@@ -962,6 +980,7 @@ def decide_gate(state: ComplianceState) -> ComplianceState:
 
 def write_records(state: ComplianceState) -> ComplianceState:
     """Write all assessment records to ATProto and close the agent run."""
+    _notify(state, "Writing assessment records...")
     client = get_client()
     start_time = state.agent_run_started
     records_written = 0

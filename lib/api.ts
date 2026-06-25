@@ -225,15 +225,7 @@ export async function createPullRequest(rkey: string, body: {
     sourceBranch: string;
     targetBranch: string;
     status: string;
-    compliance: {
-      gate_status?: string;
-      gate_reason?: string;
-      risk_level?: string;
-      summary?: string;
-      records_written?: number;
-      pr_assessment_uri?: string;
-      error?: string;
-    } | null;
+    complianceTaskId: string | null;
   }>(`/api/repos/${rkey}/pulls`, body);
 }
 
@@ -393,6 +385,21 @@ export async function fetchRepoScans(rkey: string): Promise<{ scans: ScanHistory
   return apiFetch<{ scans: ScanHistoryItem[] }>(`/api/repos/${rkey}/scans`);
 }
 
+// ── Background Task Polling ──────────────────────────────────────────────────
+
+export interface TaskStatus {
+  taskId: string;
+  status: "running" | "completed" | "failed";
+  progress: string;
+  type: "scan" | "pr_compliance";
+  result: Record<string, unknown> | null;
+  error: string | null;
+}
+
+export async function fetchTaskStatus(taskId: string): Promise<TaskStatus | null> {
+  return apiFetch<TaskStatus>(`/api/tasks/${taskId}`);
+}
+
 // ── Agent Scan ───────────────────────────────────────────────────────────────
 
 export interface ScanFinding {
@@ -441,8 +448,13 @@ export interface ScanResult {
   error: string | null;
 }
 
-export async function runScan(repoRkey: string): Promise<ScanResult | null> {
-  return apiPost<ScanResult>("/api/agent/scan", { repo_rkey: repoRkey });
+export interface ScanTaskResponse {
+  taskId: string;
+  status: string;
+}
+
+export async function runScan(repoRkey: string): Promise<ScanTaskResponse | null> {
+  return apiPost<ScanTaskResponse>("/api/agent/scan", { repo_rkey: repoRkey });
 }
 
 // ── Agent Chat ───────────────────────────────────────────────────────────────
