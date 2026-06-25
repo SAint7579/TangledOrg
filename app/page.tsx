@@ -10,6 +10,7 @@ import {
 import { Shell } from "@/components/layout/Shell";
 import { Badge } from "@/components/ui/Badge";
 import { Card, CardHeader } from "@/components/ui/Card";
+import { GraphPreview } from "@/components/graph/GraphPreview";
 import { cn } from "@/lib/utils";
 import { fetchOrgs, fetchDashboard, fetchIncidents } from "@/lib/api";
 import type { DashboardData } from "@/lib/api";
@@ -234,27 +235,10 @@ export default function DashboardPage() {
             </div>
           </Card>
 
-          {/* Dependency graph summary */}
+          {/* Dependency graph preview */}
           <Card>
             <CardHeader title="Dependency Graph" />
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="bg-zinc-800/40 rounded p-3 text-center">
-                  <p className="text-2xl font-bold font-mono text-cyan-400">{dash.graph.repoDeps}</p>
-                  <p className="text-[9px] text-zinc-500 uppercase">Repo Links</p>
-                </div>
-                <div className="bg-zinc-800/40 rounded p-3 text-center">
-                  <p className="text-2xl font-bold font-mono text-teal-400">{dash.graph.codeDeps}</p>
-                  <p className="text-[9px] text-zinc-500 uppercase">Code Links</p>
-                </div>
-              </div>
-              <Link
-                href="/graph"
-                className="flex items-center gap-1.5 text-[10px] text-blue-400 hover:text-blue-300"
-              >
-                <Network size={10} /> View full graph <ArrowRight size={9} />
-              </Link>
-            </div>
+            <GraphPreview />
           </Card>
         </div>
 
@@ -326,73 +310,6 @@ export default function DashboardPage() {
             </div>
           </div>
         )}
-
-        {/* ── Repository compliance matrix ─────────────────────────── */}
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <h2 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
-              <FolderGit2 size={12} className="text-green-400" />
-              Repository Compliance Matrix
-            </h2>
-            <Link href="/repos" className="text-[10px] text-blue-400 hover:text-blue-300 flex items-center gap-1">
-              View all <ArrowRight size={9} />
-            </Link>
-          </div>
-          <div className="border border-zinc-800 rounded overflow-hidden">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-zinc-800 bg-zinc-900/60">
-                  {["Repository", "Incidents", "Open PRs", "Scans", "Status"].map((h) => (
-                    <th key={h} className="text-left px-3 py-2 text-[10px] font-semibold text-zinc-600 uppercase tracking-[0.12em]">
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-800/60">
-                {dash.repoStats.map((repo) => (
-                  <tr key={repo.rkey} className="hover:bg-zinc-800/30 transition-colors">
-                    <td className="px-3 py-2.5">
-                      <Link href={`/repos/${repo.rkey}`} className="font-mono text-xs text-blue-400 hover:text-blue-300">
-                        {repo.name}
-                      </Link>
-                    </td>
-                    <td className="px-3 py-2.5">
-                      {repo.incidentCount > 0 ? (
-                        <span className="font-mono text-[11px] text-red-400 font-semibold">{repo.incidentCount}</span>
-                      ) : (
-                        <span className="text-[11px] text-zinc-700">0</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2.5">
-                      {repo.openPulls > 0 ? (
-                        <span className="font-mono text-[11px] text-purple-400">{repo.openPulls}</span>
-                      ) : (
-                        <span className="text-[11px] text-zinc-700">0</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2.5">
-                      {repo.scanCount > 0 ? (
-                        <span className="font-mono text-[11px] text-green-400">{repo.scanCount}</span>
-                      ) : (
-                        <span className="text-[11px] text-amber-400/70">none</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2.5">
-                      {repo.scanCount === 0 ? (
-                        <Badge variant="warning" size="sm">unscanned</Badge>
-                      ) : repo.incidentCount > 0 ? (
-                        <Badge variant="danger" size="sm">issues</Badge>
-                      ) : (
-                        <Badge variant="success" size="sm">clean</Badge>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
 
         {/* ── Quick links footer ───────────────────────────────────── */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-2">
