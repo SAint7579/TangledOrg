@@ -939,20 +939,40 @@ async def create_pull_request(rkey: str, body: CreatePullRequest, request: Reque
         dpop_private_key_jwk=dpop_key_jwk,
         data=form_data,
     )
-    log.info("Tangled PR creation: %s %s", tangled_resp.status_code, tangled_resp.headers.get("location", ""))
 
-    # Wait for the PDS record to appear (Tangled writes it)
+    status = tangled_resp.status_code
+    location = tangled_resp.headers.get("location", "") or tangled_resp.headers.get("hx-location", "")
+    log.info("Tangled PR creation: status=%s location=%s", status, location)
+
+    # 2xx = direct success, 3xx = redirect (success for form endpoints)
+    tangled_ok = status in (200, 201, 302, 303, 307, 308)
+
+    if not tangled_ok:
+        log.error("Tangled PR creation failed: %s %s", status, tangled_resp.text[:500])
+        raise HTTPException(
+            status_code=502,
+            detail=f"Tangled returned {status}: {tangled_resp.text[:200]}"
+        )
+
+    # Wait for the PDS record to appear (Tangled writes it via firehose)
     import time as _time
     pr_uri = ""
     pr_rkey = ""
-    for _attempt in range(5):
-        _time.sleep(1)
+
+    # Track existing PR URIs so we can detect the new one
+    existing_pulls = _list_records(session, "sh.tangled.repo.pull")
+    existing_uris = {p["uri"] for p in existing_pulls}
+
+    for _attempt in range(8):
+        _time.sleep(1.5)
         pulls = _list_records(session, "sh.tangled.repo.pull")
         for p in pulls:
+            if p["uri"] in existing_uris:
+                continue
             pv = p.get("value", {})
             src = pv.get("source", {})
             src_branch = src.get("branch", "") if isinstance(src, dict) else ""
-            if src_branch == body.sourceBranch and pv.get("title", "").startswith(body.title[:50]):
+            if src_branch == body.sourceBranch:
                 pr_uri = p.get("uri", "")
                 pr_rkey = pr_uri.rsplit("/", 1)[-1] if "/" in pr_uri else ""
                 break
@@ -960,12 +980,17 @@ async def create_pull_request(rkey: str, body: CreatePullRequest, request: Reque
             break
 
     if not pr_uri:
-        log.warning("PR record not found in PDS after Tangled creation (status=%s). Response: %s",
-                     tangled_resp.status_code, tangled_resp.text[:300])
-        raise HTTPException(
-            status_code=502,
-            detail=f"PR creation on Tangled returned {tangled_resp.status_code} but record not found in PDS. Check Tangled."
-        )
+        log.warning("PR record not found in PDS after Tangled creation (waited 12s). Tangled status=%s location=%s", status, location)
+        return {
+            "uri": "",
+            "rkey": "",
+            "title": body.title,
+            "sourceBranch": body.sourceBranch,
+            "targetBranch": body.targetBranch,
+            "status": "open",
+            "compliance": None,
+            "warning": "PR created on Tangled but PDS record not yet synced. It should appear shortly.",
+        }
 
     # ── Step 2: Auto-trigger compliance pipeline ─────────────────────
     compliance_result = None
@@ -1446,6 +1471,7 @@ async def list_repo_scans(rkey: str, request: Request):
             "findingsCount": val.get("findingsCount", 0),
             "findings": findings,
             "issuesCreated": val.get("issuesCreated", 0),
+            "crossRepoIssues": val.get("crossRepoIssues", 0),
             "durationMs": val.get("durationMs"),
             "error": val.get("error"),
             "createdAt": val.get("createdAt", ""),

@@ -1225,6 +1225,62 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
                       </Card>
                     )}
 
+                    {/* Cross-repo issues */}
+                    {scanResult.cross_repo_issues_created?.length > 0 && (
+                      <Card className="border-orange-900/30">
+                        <CardHeader
+                          title={`Cross-Repo Issues (${scanResult.cross_repo_issues_created.length})`}
+                          description="Issues created in other repos affected by this repo's code"
+                        />
+                        <div className="space-y-1.5">
+                          {scanResult.cross_repo_issues_created.map((ci, idx) => (
+                            <div key={idx} className="p-2.5 bg-orange-950/20 border border-orange-900/20 rounded">
+                              <div className="flex items-center gap-2 text-xs">
+                                <AlertTriangle size={12} className="text-orange-400 flex-shrink-0" />
+                                <span className="text-orange-300 font-mono font-medium">{ci.downstream_repo}</span>
+                                <Badge size="sm" variant={
+                                  ci.severity === "critical" ? "danger"
+                                    : ci.severity === "high" ? "warning"
+                                    : "neutral"
+                                }>
+                                  {ci.severity}
+                                </Badge>
+                              </div>
+                              <p className="text-[11px] text-zinc-400 mt-1 pl-5">{ci.title}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </Card>
+                    )}
+
+                    {/* Cross-repo findings (analysis without issue creation) */}
+                    {scanResult.cross_repo_findings?.length > 0 && (!scanResult.cross_repo_issues_created || scanResult.cross_repo_issues_created.length === 0) && (
+                      <Card className="border-amber-900/30">
+                        <CardHeader
+                          title={`Dependency Impact Analysis (${scanResult.cross_repo_findings.length})`}
+                          description="Potential issues detected in connected repositories"
+                        />
+                        <div className="space-y-1.5">
+                          {scanResult.cross_repo_findings.map((cf, idx) => (
+                            <div key={idx} className="p-2.5 bg-amber-950/20 border border-amber-900/20 rounded">
+                              <div className="flex items-center gap-2 text-xs">
+                                <AlertTriangle size={12} className="text-amber-400 flex-shrink-0" />
+                                <span className="text-amber-300 font-mono">{cf.downstream_repo || cf.downstream_repo_uri}</span>
+                                <Badge size="sm" variant={cf.severity === "critical" ? "danger" : cf.severity === "high" ? "warning" : "neutral"}>
+                                  {cf.severity}
+                                </Badge>
+                              </div>
+                              <p className="text-[11px] text-zinc-300 mt-1 pl-5 font-medium">{cf.title}</p>
+                              <p className="text-[10px] text-zinc-500 mt-0.5 pl-5">{cf.description}</p>
+                              {cf.source_file && (
+                                <p className="text-[10px] text-zinc-600 mt-0.5 pl-5 font-mono">Source: {cf.source_file} ({cf.dependency_type})</p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </Card>
+                    )}
+
                     {scanResult.error && (
                       <Card className="border-yellow-900/50">
                         <div className="flex items-start gap-2">
@@ -1357,6 +1413,13 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
                                 <p className="text-[10px] text-zinc-600">
                                   {scan.issuesCreated} issues auto-created
                                 </p>
+                              )}
+
+                              {scan.crossRepoIssues > 0 && (
+                                <div className="flex items-center gap-1.5 text-[10px] text-orange-400">
+                                  <AlertTriangle size={10} />
+                                  {scan.crossRepoIssues} cross-repo issue(s) created in downstream repositories
+                                </div>
                               )}
 
                               {scan.error && (

@@ -709,6 +709,7 @@ def save_scan_record(state: ScanState) -> ScanState:
             findings_count=len(state.findings),
             findings_json=json.dumps(state.findings[:50], default=str)[:50000] if state.findings else None,
             issues_created=len(state.issues_created),
+            cross_repo_issues=len(state.cross_repo_issues_created),
             duration_ms=duration_ms,
             error=state.error,
             created_at=datetime.now(timezone.utc),

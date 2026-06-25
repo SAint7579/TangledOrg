@@ -383,6 +383,7 @@ export interface ScanHistoryItem {
   findingsCount: number;
   findings: ScanFinding[];
   issuesCreated: number;
+  crossRepoIssues: number;
   durationMs: number | null;
   error: string | null;
   createdAt: string;
@@ -405,6 +406,23 @@ export interface ScanFinding {
   category: string;
 }
 
+export interface CrossRepoFinding {
+  downstream_repo_uri: string;
+  downstream_repo?: string;
+  severity: string;
+  title: string;
+  description: string;
+  source_file?: string;
+  dependency_type?: string;
+}
+
+export interface CrossRepoIssue {
+  uri: string;
+  downstream_repo: string;
+  title: string;
+  severity: string;
+}
+
 export interface ScanResult {
   repo: string;
   risk_level: string;
@@ -417,6 +435,8 @@ export interface ScanResult {
   findings: ScanFinding[];
   issues_created: { uri: string; title: string; severity: string; file: string }[];
   incidents_created: { uri: string; issue_uri: string; severity: string }[];
+  cross_repo_findings: CrossRepoFinding[];
+  cross_repo_issues_created: CrossRepoIssue[];
   duration_ms: number;
   error: string | null;
 }

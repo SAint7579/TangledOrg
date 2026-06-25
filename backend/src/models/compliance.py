@@ -205,6 +205,7 @@ class ScanRecord(ATProtoRecord):
     findings_count: int = Field(0, alias="findingsCount")
     findings_json: Optional[str] = Field(None, alias="findingsJson", max_length=50000)
     issues_created: int = Field(0, alias="issuesCreated")
+    cross_repo_issues: int = Field(0, alias="crossRepoIssues")
     duration_ms: Optional[int] = Field(None, alias="durationMs")
     error: Optional[str] = Field(None, max_length=2000)
     created_at: datetime = Field(..., alias="createdAt")
