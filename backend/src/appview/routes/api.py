@@ -1,23 +1,91 @@
-"""REST API routes serving governance data from ATProto."""
+"""REST API routes serving governance data from ATProto.
+
+All shared org data (repos, policies, members, incidents, etc.) is stored
+under the org owner's DID on the PDS.  We use the app-password–based
+"org session" for reads *and* writes so that every member of the org sees
+(and contributes to) the same dataset.  The OAuth user session is still
+checked for authentication — you must be logged in — but the actual PDS
+I/O goes through the org owner's credentials.
+"""
 
 from datetime import datetime, timezone
 from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel
 from typing import Optional
+import httpx
 
 from src.appview.routes.auth import get_authenticated_session
+from src.config import settings
 
 router = APIRouter(prefix="/api", tags=["api"])
 
 
+# ── Org-owner session (app-password based) ────────────────────────────────────
+
+_org_session_cache: dict | None = None
+
+
+def _get_org_session() -> dict:
+    """Return a session dict for the org owner using the app password.
+
+    This session is used for all shared org data reads and writes so that
+    every member sees the same records (stored under the org owner's DID).
+    The session is cached and refreshed when the access token expires.
+    """
+    global _org_session_cache
+
+    if _org_session_cache is not None:
+        return _org_session_cache
+
+    pds = settings.pds_host.rstrip("/")
+    resp = httpx.post(
+        f"{pds}/xrpc/com.atproto.server.createSession",
+        json={
+            "identifier": settings.handle,
+            "password": settings.app_password,
+        },
+        timeout=15,
+    )
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not authenticate org owner ({settings.handle}): {resp.text}",
+        )
+    data = resp.json()
+    _org_session_cache = {
+        "did": data["did"],
+        "access_token": data["accessJwt"],
+        "refresh_token": data.get("refreshJwt", ""),
+        "pds_issuer": pds,
+        "handle": data.get("handle", settings.handle),
+    }
+    return _org_session_cache
+
+
+def _refresh_org_session() -> dict:
+    """Force-refresh the org owner session (e.g. after a 401)."""
+    global _org_session_cache
+    _org_session_cache = None
+    return _get_org_session()
+
+
 def _list_records(session: dict, collection: str) -> list[dict]:
-    import httpx
+    """List records from the given session's DID."""
 
     resp = httpx.get(
         f"{session['pds_issuer']}/xrpc/com.atproto.repo.listRecords",
         params={"repo": session["did"], "collection": collection, "limit": 100},
         headers={"Authorization": f"Bearer {session['access_token']}"},
+        timeout=15,
     )
+    if resp.status_code == 401:
+        refreshed = _refresh_org_session()
+        resp = httpx.get(
+            f"{refreshed['pds_issuer']}/xrpc/com.atproto.repo.listRecords",
+            params={"repo": refreshed["did"], "collection": collection, "limit": 100},
+            headers={"Authorization": f"Bearer {refreshed['access_token']}"},
+            timeout=15,
+        )
     if resp.status_code != 200:
         return []
 
@@ -31,8 +99,6 @@ def _list_records(session: dict, collection: str) -> list[dict]:
 
 def _resolve_did_to_handle(pds_url: str, did: str) -> str:
     """Resolve a DID to its handle via the PDS."""
-    import httpx
-
     try:
         resp = httpx.get(
             f"{pds_url}/xrpc/com.atproto.repo.describeRepo",
@@ -56,8 +122,6 @@ def _resolve_dids_batch(pds_url: str, dids: list[str]) -> dict[str, str]:
 
 
 def _create_record(session: dict, collection: str, record: dict, rkey: str | None = None) -> dict:
-    import httpx
-
     body: dict = {
         "repo": session["did"],
         "collection": collection,
@@ -70,20 +134,37 @@ def _create_record(session: dict, collection: str, record: dict, rkey: str | Non
         f"{session['pds_issuer']}/xrpc/com.atproto.repo.createRecord",
         json=body,
         headers={"Authorization": f"Bearer {session['access_token']}"},
+        timeout=15,
     )
+    if resp.status_code == 401:
+        refreshed = _refresh_org_session()
+        body["repo"] = refreshed["did"]
+        resp = httpx.post(
+            f"{refreshed['pds_issuer']}/xrpc/com.atproto.repo.createRecord",
+            json=body,
+            headers={"Authorization": f"Bearer {refreshed['access_token']}"},
+            timeout=15,
+        )
     if resp.status_code not in (200, 201):
         raise HTTPException(status_code=resp.status_code, detail=resp.text)
     return resp.json()
 
 
 def _delete_record(session: dict, collection: str, rkey: str) -> None:
-    import httpx
-
     resp = httpx.post(
         f"{session['pds_issuer']}/xrpc/com.atproto.repo.deleteRecord",
         json={"repo": session["did"], "collection": collection, "rkey": rkey},
         headers={"Authorization": f"Bearer {session['access_token']}"},
+        timeout=15,
     )
+    if resp.status_code == 401:
+        refreshed = _refresh_org_session()
+        resp = httpx.post(
+            f"{refreshed['pds_issuer']}/xrpc/com.atproto.repo.deleteRecord",
+            json={"repo": refreshed["did"], "collection": collection, "rkey": rkey},
+            headers={"Authorization": f"Bearer {refreshed['access_token']}"},
+            timeout=15,
+        )
     if resp.status_code not in (200, 201):
         raise HTTPException(status_code=resp.status_code, detail=resp.text)
 
@@ -93,7 +174,8 @@ def _delete_record(session: dict, collection: str, rkey: str) -> None:
 
 @router.get("/org")
 async def list_orgs(request: Request):
-    session = get_authenticated_session(request)
+    get_authenticated_session(request)  # auth check
+    session = _get_org_session()
     records = _list_records(session, "sh.tangled.governance.org.organization")
     orgs = []
     for r in records:
@@ -111,7 +193,8 @@ async def list_orgs(request: Request):
 
 @router.get("/org/{rkey}/members")
 async def list_members(rkey: str, request: Request):
-    session = get_authenticated_session(request)
+    get_authenticated_session(request)  # auth check
+    session = _get_org_session()
     memberships = _list_records(session, "sh.tangled.governance.org.membership")
     roles = _list_records(session, "sh.tangled.governance.org.role")
     teams = _list_records(session, "sh.tangled.governance.org.team")
@@ -168,9 +251,9 @@ class AddMemberRequest(BaseModel):
 @router.post("/org/members")
 async def add_member(body: AddMemberRequest, request: Request):
     """Add a member to the organization by handle."""
-    session = get_authenticated_session(request)
+    user_session = get_authenticated_session(request)  # auth check
+    session = _get_org_session()
 
-    import httpx
     member_did = ""
     try:
         resp = httpx.get(
@@ -193,7 +276,7 @@ async def add_member(body: AddMemberRequest, request: Request):
     record = {
         "org": body.orgUri,
         "memberDid": member_did,
-        "invitedBy": session["did"],
+        "invitedBy": user_session["did"],
         "createdAt": now,
     }
     if body.roleUri:
@@ -208,7 +291,8 @@ async def add_member(body: AddMemberRequest, request: Request):
 
 @router.get("/repos")
 async def list_repos(request: Request):
-    session = get_authenticated_session(request)
+    get_authenticated_session(request)  # auth check
+    session = _get_org_session()
     repos = _list_records(session, "sh.tangled.repo")
     profiles = _list_records(session, "sh.tangled.governance.compliance.repoProfile")
 
@@ -234,7 +318,8 @@ async def list_repos(request: Request):
 
 @router.get("/repos/{rkey}/profile")
 async def get_repo_profile(rkey: str, request: Request):
-    session = get_authenticated_session(request)
+    get_authenticated_session(request)  # auth check
+    session = _get_org_session()
     profiles = _list_records(session, "sh.tangled.governance.compliance.repoProfile")
     for p in profiles:
         if rkey in p["value"].get("repo", ""):
@@ -242,8 +327,9 @@ async def get_repo_profile(rkey: str, request: Request):
     return {"profile": None}
 
 
-def _get_repo_record(session: dict, rkey: str) -> dict:
+def _get_repo_record(rkey: str) -> dict:
     """Find a repo record by rkey and return its value dict (with knot, repoDid, etc.)."""
+    session = _get_org_session()
     repos = _list_records(session, "sh.tangled.repo")
     for r in repos:
         if r["rkey"] == rkey:
@@ -253,8 +339,9 @@ def _get_repo_record(session: dict, rkey: str) -> dict:
 
 @router.get("/repos/{rkey}/issues")
 async def list_repo_issues(rkey: str, request: Request):
-    session = get_authenticated_session(request)
-    repo_rec = _get_repo_record(session, rkey)
+    get_authenticated_session(request)  # auth check
+    session = _get_org_session()
+    repo_rec = _get_repo_record(rkey)
     repo_did = repo_rec["value"].get("repoDid", "")
 
     issues = _list_records(session, "sh.tangled.repo.issue")
@@ -295,8 +382,9 @@ async def list_repo_issues(rkey: str, request: Request):
 
 @router.get("/repos/{rkey}/pulls")
 async def list_repo_pulls(rkey: str, request: Request):
-    session = get_authenticated_session(request)
-    repo_rec = _get_repo_record(session, rkey)
+    get_authenticated_session(request)  # auth check
+    session = _get_org_session()
+    repo_rec = _get_repo_record(rkey)
     repo_did = repo_rec["value"].get("repoDid", "")
 
     pulls = _list_records(session, "sh.tangled.repo.pull")
@@ -347,10 +435,8 @@ async def list_repo_pulls(rkey: str, request: Request):
 
 @router.get("/repos/{rkey}/tree")
 async def get_repo_tree(rkey: str, request: Request, ref: str = "main", path: str = ""):
-    import httpx
-
-    session = get_authenticated_session(request)
-    repo_rec = _get_repo_record(session, rkey)
+    get_authenticated_session(request)  # auth check
+    repo_rec = _get_repo_record(rkey)
     val = repo_rec["value"]
     knot = val.get("knot", "")
     repo_did = val.get("repoDid", "")
@@ -373,10 +459,8 @@ async def get_repo_tree(rkey: str, request: Request, ref: str = "main", path: st
 
 @router.get("/repos/{rkey}/log")
 async def get_repo_log(rkey: str, request: Request, ref: str = "main", limit: int = 20):
-    import httpx
-
-    session = get_authenticated_session(request)
-    repo_rec = _get_repo_record(session, rkey)
+    get_authenticated_session(request)  # auth check
+    repo_rec = _get_repo_record(rkey)
     val = repo_rec["value"]
     knot = val.get("knot", "")
     repo_did = val.get("repoDid", "")
@@ -408,7 +492,8 @@ class RepoProfileCreate(BaseModel):
 
 @router.post("/repos/{rkey}/profile")
 async def create_repo_profile(rkey: str, body: RepoProfileCreate, request: Request):
-    session = get_authenticated_session(request)
+    get_authenticated_session(request)  # auth check
+    session = _get_org_session()
     now = datetime.now(timezone.utc).isoformat()
     record = {
         "org": body.orgUri,
@@ -436,7 +521,8 @@ async def create_repo_profile(rkey: str, body: RepoProfileCreate, request: Reque
 
 @router.get("/policies")
 async def list_policies(request: Request):
-    session = get_authenticated_session(request)
+    get_authenticated_session(request)  # auth check
+    session = _get_org_session()
     packs = _list_records(session, "sh.tangled.governance.policy.policyPack")
     controls = _list_records(session, "sh.tangled.governance.policy.control")
     bindings = _list_records(session, "sh.tangled.governance.policy.repoBinding")
@@ -483,7 +569,8 @@ class PolicyPackCreate(BaseModel):
 @router.post("/policies")
 async def create_policy_pack(body: PolicyPackCreate, request: Request):
     """Create a new policy pack and optionally its controls."""
-    session = get_authenticated_session(request)
+    get_authenticated_session(request)  # auth check
+    session = _get_org_session()
     now = datetime.now(timezone.utc).isoformat()
     record = {
         "org": body.orgUri,
@@ -528,12 +615,13 @@ class PolicyBindingCreate(BaseModel):
 
 @router.post("/policies/bind")
 async def create_policy_binding(body: PolicyBindingCreate, request: Request):
-    session = get_authenticated_session(request)
+    user_session = get_authenticated_session(request)  # auth check
+    session = _get_org_session()
     now = datetime.now(timezone.utc).isoformat()
     record = {
         "repo": body.repoUri,
         "policyPack": body.policyPackUri,
-        "boundBy": session["did"],
+        "boundBy": user_session["did"],
         "createdAt": now,
     }
     if body.enforcementOverride:
@@ -546,7 +634,8 @@ async def create_policy_binding(body: PolicyBindingCreate, request: Request):
 
 @router.get("/incidents")
 async def list_incidents(request: Request):
-    session = get_authenticated_session(request)
+    get_authenticated_session(request)  # auth check
+    session = _get_org_session()
     incidents = _list_records(session, "sh.tangled.governance.compliance.incident")
     sla_trackers = _list_records(session, "sh.tangled.governance.compliance.slaTracker")
 
@@ -638,7 +727,8 @@ class IncidentCreate(BaseModel):
 
 @router.post("/incidents")
 async def create_incident(body: IncidentCreate, request: Request):
-    session = get_authenticated_session(request)
+    user_session = get_authenticated_session(request)  # auth check
+    session = _get_org_session()
     now = datetime.now(timezone.utc).isoformat()
 
     issue_record = {
@@ -646,7 +736,7 @@ async def create_incident(body: IncidentCreate, request: Request):
         "description": body.description,
         "repo": body.repoUri,
         "createdAt": now,
-        "createdBy": session["did"],
+        "createdBy": user_session["did"],
     }
     issue_result = _create_record(session, "sh.tangled.issue", issue_record)
 
@@ -676,7 +766,8 @@ async def create_incident(body: IncidentCreate, request: Request):
 
 @router.get("/audit")
 async def list_audit(request: Request):
-    session = get_authenticated_session(request)
+    get_authenticated_session(request)  # auth check
+    session = _get_org_session()
     agent_runs = _list_records(session, "sh.tangled.governance.audit.agentRun")
     evidence = _list_records(session, "sh.tangled.governance.audit.evidence")
     waivers = _list_records(session, "sh.tangled.governance.audit.waiver")
@@ -698,7 +789,8 @@ async def list_audit(request: Request):
 
 @router.get("/graph")
 async def list_graph(request: Request):
-    session = get_authenticated_session(request)
+    get_authenticated_session(request)  # auth check
+    session = _get_org_session()
     repos = _list_records(session, "sh.tangled.repo")
     repo_deps = _list_records(session, "sh.tangled.governance.graph.repoDependency")
     code_deps = _list_records(session, "sh.tangled.governance.graph.codeDependency")
@@ -721,7 +813,8 @@ class RepoDependencyCreate(BaseModel):
 
 @router.post("/graph/repo-dependency")
 async def create_repo_dependency(body: RepoDependencyCreate, request: Request):
-    session = get_authenticated_session(request)
+    get_authenticated_session(request)  # auth check
+    session = _get_org_session()
     now = datetime.now(timezone.utc).isoformat()
     record = {
         "sourceRepo": body.sourceRepo,
@@ -747,7 +840,8 @@ class CodeDependencyCreate(BaseModel):
 
 @router.post("/graph/code-dependency")
 async def create_code_dependency(body: CodeDependencyCreate, request: Request):
-    session = get_authenticated_session(request)
+    get_authenticated_session(request)  # auth check
+    session = _get_org_session()
     now = datetime.now(timezone.utc).isoformat()
     record = {
         "sourceRepo": body.sourceRepo,
@@ -773,6 +867,7 @@ class DeleteRecord(BaseModel):
 
 @router.post("/graph/delete")
 async def delete_graph_edge(body: DeleteRecord, request: Request):
-    session = get_authenticated_session(request)
+    get_authenticated_session(request)  # auth check
+    session = _get_org_session()
     _delete_record(session, body.collection, body.rkey)
     return {"ok": True}
