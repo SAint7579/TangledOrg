@@ -5,7 +5,7 @@ WORKDIR /app
 COPY pyproject.toml .
 COPY src/ src/
 
-RUN pip install --no-cache-dir . --index-url https://pypi.org/simple/
+RUN pip install --no-cache-dir ".[agent]" --index-url https://pypi.org/simple/
 
 RUN mkdir -p /app/data
 
