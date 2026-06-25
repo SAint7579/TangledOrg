@@ -407,10 +407,10 @@ export default function PoliciesPage() {
                                 ctrl.severity === "critical"
                                   ? "danger"
                                   : ctrl.severity === "high"
-                                  ? "danger"
-                                  : ctrl.severity === "medium"
                                   ? "warning"
-                                  : "neutral"
+                                  : ctrl.severity === "medium"
+                                  ? "info"
+                                  : "success"
                               }
                             >
                               {ctrl.severity}
