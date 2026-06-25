@@ -653,7 +653,45 @@ async def list_incidents(request: Request):
     return {"incidents": result}
 
 
-# --- Agent ---
+# ── Agent ────────────────────────────────────────────────────────────────────
+
+
+class ChatRequest(BaseModel):
+    message: str
+    history: Optional[list[dict]] = None  # [{"role": "human"|"assistant", "content": str}]
+
+
+@router.post("/agent/chat")
+async def agent_chat(body: ChatRequest, request: Request):
+    """Chat with the Tangled Org AI assistant.
+
+    The agent has access to all tools — repos, issues, PRs, compliance,
+    policies, audit logs, and dependency graphs.
+
+    Requires: pip install 'tangled-org[agent]' and TANGLED_ORG_ANTHROPIC_API_KEY
+    """
+    get_authenticated_session(request)  # auth check
+
+    try:
+        from src.agent.chat import run_chat
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="Agent dependencies not installed. Run: pip install 'tangled-org[agent]'",
+        )
+
+    import asyncio
+
+    try:
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None, run_chat, body.message, body.history
+        )
+        return {"response": response}
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Agent error: {exc}")
 
 
 class AgentRunRequest(BaseModel):

@@ -10,8 +10,25 @@ Pass `ALL_TOOLS` to your LangGraph `ToolNode` or `bind_tools` call:
 
 Domain-specific subsets are also exported if you want to give a node access
 to only a slice of the tool surface.
+
+TANGLED_TOOLS covers native Tangled data (repos, issues, PRs, file tree, commits).
+ALL_TOOLS includes both governance tools and Tangled-native tools.
 """
 
+from src.agent.tools.tangled import (
+    get_org_summary,
+    get_repo,
+    get_repo_log,
+    get_repo_tree,
+    get_issue,
+    get_pull,
+    list_all_issues,
+    list_all_pulls,
+    list_issues,
+    list_pulls,
+    list_repos,
+    search_issues,
+)
 from src.agent.tools.audit import (
     complete_agent_run,
     create_evidence,
@@ -144,7 +161,22 @@ AUDIT_TOOLS = [
     list_waivers,
 ]
 
-ALL_TOOLS = ORG_TOOLS + POLICY_TOOLS + COMPLIANCE_TOOLS + GRAPH_TOOLS + AUDIT_TOOLS
+TANGLED_TOOLS = [
+    get_org_summary,
+    list_repos,
+    get_repo,
+    list_issues,
+    get_issue,
+    list_all_issues,
+    search_issues,
+    list_pulls,
+    get_pull,
+    list_all_pulls,
+    get_repo_tree,
+    get_repo_log,
+]
+
+ALL_TOOLS = TANGLED_TOOLS + ORG_TOOLS + POLICY_TOOLS + COMPLIANCE_TOOLS + GRAPH_TOOLS + AUDIT_TOOLS
 
 __all__ = [
     # subsets
@@ -153,7 +185,21 @@ __all__ = [
     "COMPLIANCE_TOOLS",
     "GRAPH_TOOLS",
     "AUDIT_TOOLS",
+    "TANGLED_TOOLS",
     "ALL_TOOLS",
+    # tangled native
+    "get_org_summary",
+    "list_repos",
+    "get_repo",
+    "list_issues",
+    "get_issue",
+    "list_all_issues",
+    "search_issues",
+    "list_pulls",
+    "get_pull",
+    "list_all_pulls",
+    "get_repo_tree",
+    "get_repo_log",
     # org
     "list_organizations",
     "get_organization",
