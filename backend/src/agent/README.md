@@ -84,6 +84,7 @@ These read and write live data from the Tangled PDS and knot servers.
 | `get_pull(pull_uri)` | Full detail on one PR |
 | `list_all_pulls(status)` | PRs across the whole org |
 | `get_repo_tree(repo_rkey, ref, path)` | Browse file tree via knot server |
+| `get_file_content(repo_rkey, path, ref)` | Read a single file's contents via knot |
 | `get_repo_log(repo_rkey, ref, limit)` | Commit history via knot server |
 
 **Write tools**
@@ -114,7 +115,7 @@ All tools are exported as `ALL_TOOLS` from `tools/__init__.py`.
 
 ## Chat agent (`chat.py`)
 
-Uses all 57 tools in a ReAct loop (LangGraph `create_react_agent`).
+Uses all 58 tools in a ReAct loop (LangGraph `create_react_agent`).
 
 ```python
 from src.agent.chat import run_chat
@@ -144,6 +145,32 @@ Response:
 {
   "response": "Here are the open pull requests across all repos: ..."
 }
+```
+
+---
+
+## Code review scan (`nodes/scan.py`)
+
+A 5-node LangGraph pipeline that scans a repo's source code against its bound policy controls:
+
+```
+load_context → collect_files → read_files → evaluate_compliance → report_findings
+```
+
+Reads live files from the knot server (no clone needed), evaluates against every bound control, and auto-creates issues + incidents for violations.
+
+```python
+from src.agent.nodes.scan import scan_graph, ScanState
+
+result = scan_graph.invoke(ScanState(repo_rkey="auth-service"))
+print(result.summary)
+print(f"Findings: {len(result.findings)}, Issues created: {len(result.issues_created)}")
+```
+
+**API endpoint:** `POST /api/agent/scan`
+
+```json
+{ "repo_rkey": "auth-service" }
 ```
 
 ---

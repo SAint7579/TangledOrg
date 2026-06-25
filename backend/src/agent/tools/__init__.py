@@ -20,6 +20,7 @@ from src.agent.tools.tangled import (
     get_repo,
     get_repo_log,
     get_repo_tree,
+    get_file_content,
     get_issue,
     get_pull,
     list_all_issues,
@@ -181,6 +182,7 @@ TANGLED_TOOLS = [
     list_all_pulls,
     get_repo_tree,
     get_repo_log,
+    get_file_content,
     create_issue,
     close_issue,
     reopen_issue,
@@ -214,6 +216,7 @@ __all__ = [
     "list_all_pulls",
     "get_repo_tree",
     "get_repo_log",
+    "get_file_content",
     # tangled native — write
     "create_issue",
     "close_issue",

@@ -229,6 +229,39 @@ export async function runAgent(payload: AgentRunRequest): Promise<AgentRunResult
   return apiPost<AgentRunResult>("/api/agent/run", payload);
 }
 
+// ── Agent Scan ───────────────────────────────────────────────────────────────
+
+export interface ScanFinding {
+  file: string;
+  line?: number;
+  severity: string;
+  control_id: string;
+  control_name: string;
+  title: string;
+  description: string;
+  category: string;
+}
+
+export interface ScanResult {
+  repo: string;
+  risk_level: string;
+  summary: string;
+  policy_pack: string;
+  files_scanned: number;
+  controls_passed: number;
+  controls_failed: number;
+  controls_warning: number;
+  findings: ScanFinding[];
+  issues_created: { uri: string; title: string; severity: string; file: string }[];
+  incidents_created: { uri: string; issue_uri: string; severity: string }[];
+  duration_ms: number;
+  error: string | null;
+}
+
+export async function runScan(repoRkey: string): Promise<ScanResult | null> {
+  return apiPost<ScanResult>("/api/agent/scan", { repo_rkey: repoRkey });
+}
+
 // ── Agent Chat ───────────────────────────────────────────────────────────────
 
 export interface ChatMessage {

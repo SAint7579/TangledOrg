@@ -424,8 +424,9 @@ def list_all_pulls(status: str = "open") -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-def _get_repo_knot(repo_rkey: str) -> tuple[str, str]:
-    """Return (knot, repoDid) for a repo rkey. Raises ValueError if not found."""
+def _get_repo_knot(repo_rkey: str) -> tuple[str, str, str]:
+    """Return (knot, repoDid, ownerDid) for a repo rkey. Raises ValueError if not found."""
+    client = get_client()
     repos = _list_tangled_records("sh.tangled.repo")
     for r in repos:
         uri = r.get("uri", "")
@@ -435,7 +436,7 @@ def _get_repo_knot(repo_rkey: str) -> tuple[str, str]:
             repo_did = v.get("repoDid", "")
             if not knot:
                 raise ValueError(f"Repo '{repo_rkey}' has no knot server configured")
-            return knot, repo_did
+            return knot, repo_did, client.did
     raise ValueError(f"Repo '{repo_rkey}' not found")
 
 
@@ -451,8 +452,8 @@ def get_repo_tree(repo_rkey: str, ref: str = "main", path: str = "") -> dict:
     Use this to explore what files a repo contains before diving into issues.
     """
     try:
-        knot, repo_did = _get_repo_knot(repo_rkey)
-        params: dict = {"repo": f"{repo_did}/{repo_rkey}", "ref": ref}
+        knot, _repo_did, owner_did = _get_repo_knot(repo_rkey)
+        params: dict = {"repo": f"{owner_did}/{repo_rkey}", "ref": ref}
         if path:
             params["path"] = path
         resp = httpx.get(
@@ -461,14 +462,14 @@ def get_repo_tree(repo_rkey: str, ref: str = "main", path: str = "") -> dict:
             timeout=_HTTPX_TIMEOUT,
         )
         if resp.status_code != 200:
-            return {"error": f"Knot server returned {resp.status_code}", "entries": []}
+            return {"error": f"Knot server returned {resp.status_code}", "files": []}
         return resp.json()
     except ValueError as exc:
-        return {"error": str(exc), "entries": []}
+        return {"error": str(exc), "files": []}
     except httpx.ConnectError:
-        return {"error": f"Cannot reach knot server for '{repo_rkey}'", "entries": []}
+        return {"error": f"Cannot reach knot server for '{repo_rkey}'", "files": []}
     except Exception as exc:  # noqa: BLE001
-        return {"error": str(exc), "entries": []}
+        return {"error": str(exc), "files": []}
 
 
 @tool
@@ -483,9 +484,9 @@ def get_repo_log(repo_rkey: str, ref: str = "main", limit: int = 20) -> dict:
     Use this to understand recent activity or to find when a specific change landed.
     """
     try:
-        knot, repo_did = _get_repo_knot(repo_rkey)
+        knot, _repo_did, owner_did = _get_repo_knot(repo_rkey)
         params: dict = {
-            "repo": f"{repo_did}/{repo_rkey}",
+            "repo": f"{owner_did}/{repo_rkey}",
             "ref": ref,
             "limit": min(limit, 100),
         }
@@ -503,6 +504,45 @@ def get_repo_log(repo_rkey: str, ref: str = "main", limit: int = 20) -> dict:
         return {"error": f"Cannot reach knot server for '{repo_rkey}'", "commits": []}
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc), "commits": []}
+
+
+@tool
+def get_file_content(repo_rkey: str, path: str, ref: str = "main") -> dict:
+    """Read the contents of a single file in a repository.
+
+    repo_rkey: short name of the repo (e.g. 'auth-service')
+    path: file path relative to repo root (e.g. 'src/auth.c')
+    ref: git ref — branch name, tag, or commit SHA (default: 'main')
+
+    Returns the file content, encoding, size, MIME type, and last commit info.
+    Binary files return isBinary=true with no content.
+    Use get_repo_tree() first to discover file paths, then this tool to read them.
+    """
+    try:
+        knot, _repo_did, owner_did = _get_repo_knot(repo_rkey)
+        resp = httpx.get(
+            f"https://{knot}/xrpc/sh.tangled.repo.blob",
+            params={"repo": f"{owner_did}/{repo_rkey}", "ref": ref, "path": path},
+            timeout=_HTTPX_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            return {"error": f"Knot server returned {resp.status_code}", "content": ""}
+        data = resp.json()
+        if data.get("isBinary"):
+            return {"path": path, "isBinary": True, "size": data.get("size", 0), "content": ""}
+        return {
+            "path": path,
+            "content": data.get("content", ""),
+            "size": data.get("size", 0),
+            "mimeType": data.get("mimeType", ""),
+            "isBinary": False,
+        }
+    except ValueError as exc:
+        return {"error": str(exc), "content": ""}
+    except httpx.ConnectError:
+        return {"error": f"Cannot reach knot server for '{repo_rkey}'", "content": ""}
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc), "content": ""}
 
 
 # ---------------------------------------------------------------------------

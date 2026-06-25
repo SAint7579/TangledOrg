@@ -996,6 +996,8 @@ else:
     """None when langgraph is not installed (install with: pip install 'tangled-org[agent]')"""
 
 
+from src.agent.nodes.scan import ScanState, scan_graph  # noqa: E402
+
 __all__ = [
     "ComplianceState",
     "clone_diff",
@@ -1007,4 +1009,6 @@ __all__ = [
     "decide_gate",
     "write_records",
     "graph",
+    "ScanState",
+    "scan_graph",
 ]

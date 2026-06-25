@@ -8,6 +8,7 @@ checked for authentication — you must be logged in — but the actual PDS
 I/O goes through the org owner's credentials.
 """
 
+import time
 from datetime import datetime, timezone
 from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel
@@ -747,6 +748,57 @@ async def run_agent(body: AgentRunRequest, request: Request):
         "records_written": result.records_written,
         "agent_run_uri": result.agent_run_uri,
         "pr_assessment_uri": result.pr_assessment_uri,
+        "error": result.error,
+    }
+
+
+class ScanRequest(BaseModel):
+    repo_rkey: str
+
+
+@router.post("/agent/scan")
+async def run_scan(body: ScanRequest, request: Request):
+    """Trigger a compliance scan on a repository's source code.
+
+    Reads the repo's bound policy pack and controls, fetches source files
+    from the knot server, evaluates them with Claude, and creates issues
+    for any violations found.
+    """
+    get_authenticated_session(request)  # auth check
+
+    try:
+        from src.agent.nodes.scan import ScanState, scan_graph
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="Agent dependencies not installed. Run: pip install 'tangled-org[agent]'",
+        )
+
+    if scan_graph is None:
+        raise HTTPException(
+            status_code=503,
+            detail="LangGraph not available. Run: pip install 'tangled-org[agent]'",
+        )
+
+    import asyncio
+
+    state = ScanState(repo_rkey=body.repo_rkey)
+    loop = asyncio.get_event_loop()
+    result: ScanState = await loop.run_in_executor(None, scan_graph.invoke, state)
+
+    return {
+        "repo": result.repo_rkey,
+        "risk_level": result.risk_level,
+        "summary": result.summary,
+        "policy_pack": result.policy_pack_name,
+        "files_scanned": result.files_scanned,
+        "controls_passed": result.controls_passed,
+        "controls_failed": result.controls_failed,
+        "controls_warning": result.controls_warning,
+        "findings": result.findings,
+        "issues_created": result.issues_created,
+        "incidents_created": result.incidents_created,
+        "duration_ms": int((time.time() - result.started) * 1000),
         "error": result.error,
     }
 

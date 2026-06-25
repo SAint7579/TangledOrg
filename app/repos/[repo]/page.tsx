@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   Shield, Lock, FileText, Settings, AlertCircle,
   Code2, GitPullRequest, Folder, File, ChevronRight,
+  ScanSearch, Loader2, CheckCircle2, XCircle, AlertTriangle,
 } from "lucide-react";
 import { Shell } from "@/components/layout/Shell";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -12,11 +13,12 @@ import { Badge } from "@/components/ui/Badge";
 import { RiskBadge } from "@/components/compliance/RiskBadge";
 import {
   fetchRepos, fetchRepoProfile, fetchPolicies, fetchIncidents,
-  fetchRepoIssues, fetchRepoPulls, fetchRepoTree,
+  fetchRepoIssues, fetchRepoPulls, fetchRepoTree, runScan,
 } from "@/lib/api";
+import type { ScanResult } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-type Tab = "code" | "issues" | "pulls" | "compliance" | "policies";
+type Tab = "code" | "issues" | "pulls" | "compliance" | "policies" | "scan";
 
 const REGULATION_LABELS: Record<string, string> = {
   "iso-27001": "ISO 27001", gdpr: "GDPR", "eu-ai-act": "EU AI Act",
@@ -50,6 +52,9 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
   const [treePath, setTreePath] = useState("");
   const [treeLoading, setTreeLoading] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [scanResult, setScanResult] = useState<ScanResult | null>(null);
+  const [scanRunning, setScanRunning] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
 
   useEffect(() => {
     const rkey = params.repo;
@@ -88,6 +93,31 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
     }
   }, [loading, activeTab, treeEntries.length, loadTree]);
 
+  const handleScan = useCallback(async () => {
+    setScanRunning(true);
+    setScanError(null);
+    setScanResult(null);
+    try {
+      const result = await runScan(params.repo);
+      if (!result) {
+        setScanError("Scan failed. The agent may not be configured.");
+        return;
+      }
+      if (result.error && !result.findings?.length) {
+        setScanError(result.error);
+        return;
+      }
+      setScanResult(result);
+      if (result.issues_created?.length) {
+        fetchRepoIssues(params.repo).then((data) => setIssues(data?.issues || []));
+      }
+    } catch (err: any) {
+      setScanError(err?.message || "Unknown error");
+    } finally {
+      setScanRunning(false);
+    }
+  }, [params.repo]);
+
   if (loading) {
     return (
       <Shell breadcrumbs={[{ label: "Repos", href: "/repos" }, { label: params.repo }]}>
@@ -112,6 +142,7 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
     { id: "pulls", label: "Pull Requests", icon: GitPullRequest, badge: openPulls.length },
     { id: "compliance", label: "Compliance Profile", icon: Shield },
     { id: "policies", label: "Bound Policies", icon: FileText },
+    { id: "scan", label: "Code Review", icon: ScanSearch, badge: scanResult?.findings?.length },
   ];
 
   return (
@@ -458,6 +489,207 @@ export default function RepoDetailPage({ params }: { params: { repo: string } })
                       )}
                     </Card>
                   ))
+                )}
+              </div>
+            )}
+
+            {/* ── Scan / Code Review Tab ─────────────────────────── */}
+            {activeTab === "scan" && (
+              <div className="space-y-4">
+                {/* Header with scan button */}
+                <Card>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-sm font-medium text-zinc-200">AI Compliance Code Review</h3>
+                      <p className="text-xs text-zinc-500 mt-1">
+                        Scans source files against bound policy controls and raises issues for violations.
+                      </p>
+                    </div>
+                    <button
+                      onClick={handleScan}
+                      disabled={scanRunning}
+                      className={cn(
+                        "flex items-center gap-2 px-4 py-2 text-sm font-medium rounded transition-colors",
+                        scanRunning
+                          ? "bg-zinc-800 text-zinc-500 cursor-not-allowed"
+                          : "bg-blue-600 hover:bg-blue-500 text-white"
+                      )}
+                    >
+                      {scanRunning ? (
+                        <>
+                          <Loader2 size={14} className="animate-spin" />
+                          Scanning...
+                        </>
+                      ) : (
+                        <>
+                          <ScanSearch size={14} />
+                          Run Scan
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </Card>
+
+                {/* Error */}
+                {scanError && (
+                  <Card className="border-red-900/50">
+                    <div className="flex items-start gap-3">
+                      <XCircle size={16} className="text-red-400 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-sm font-medium text-red-400">Scan Failed</p>
+                        <p className="text-xs text-zinc-400 mt-1">{scanError}</p>
+                      </div>
+                    </div>
+                  </Card>
+                )}
+
+                {/* Running indicator */}
+                {scanRunning && (
+                  <Card>
+                    <div className="flex flex-col items-center py-8 gap-3">
+                      <Loader2 size={32} className="text-blue-400 animate-spin" />
+                      <p className="text-sm text-zinc-400">Reading files and evaluating against policies...</p>
+                      <p className="text-xs text-zinc-600">This may take 30-60 seconds depending on the repo size.</p>
+                    </div>
+                  </Card>
+                )}
+
+                {/* Results */}
+                {scanResult && !scanRunning && (
+                  <>
+                    {/* Summary card */}
+                    <Card>
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <h3 className="text-sm font-medium text-zinc-200">Scan Results</h3>
+                          <div className="flex items-center gap-2">
+                            <RiskBadge tier={scanResult.risk_level as any} />
+                            <span className="text-xs text-zinc-500">
+                              {scanResult.files_scanned} files scanned in {(scanResult.duration_ms / 1000).toFixed(1)}s
+                            </span>
+                          </div>
+                        </div>
+                        {scanResult.policy_pack && (
+                          <p className="text-xs text-zinc-500">
+                            Policy: <span className="text-zinc-400">{scanResult.policy_pack}</span>
+                          </p>
+                        )}
+                        <p className="text-sm text-zinc-300">{scanResult.summary}</p>
+
+                        <div className="grid grid-cols-3 gap-3">
+                          <div className="flex items-center gap-2 p-2.5 bg-green-950/30 border border-green-900/30 rounded">
+                            <CheckCircle2 size={14} className="text-green-400" />
+                            <div>
+                              <p className="text-lg font-bold text-green-400">{scanResult.controls_passed}</p>
+                              <p className="text-[10px] text-zinc-500">Passed</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 p-2.5 bg-yellow-950/30 border border-yellow-900/30 rounded">
+                            <AlertTriangle size={14} className="text-yellow-400" />
+                            <div>
+                              <p className="text-lg font-bold text-yellow-400">{scanResult.controls_warning}</p>
+                              <p className="text-[10px] text-zinc-500">Warnings</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 p-2.5 bg-red-950/30 border border-red-900/30 rounded">
+                            <XCircle size={14} className="text-red-400" />
+                            <div>
+                              <p className="text-lg font-bold text-red-400">{scanResult.controls_failed}</p>
+                              <p className="text-[10px] text-zinc-500">Failed</p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </Card>
+
+                    {/* Findings list */}
+                    {scanResult.findings.length > 0 && (
+                      <Card>
+                        <CardHeader
+                          title={`Findings (${scanResult.findings.length})`}
+                          description="Issues auto-created for each finding"
+                        />
+                        <div className="divide-y divide-zinc-800/60">
+                          {scanResult.findings.map((finding, idx) => {
+                            const sevColor = {
+                              critical: "text-red-400 bg-red-950/40 border-red-900/40",
+                              high: "text-orange-400 bg-orange-950/40 border-orange-900/40",
+                              medium: "text-yellow-400 bg-yellow-950/40 border-yellow-900/40",
+                              low: "text-blue-400 bg-blue-950/40 border-blue-900/40",
+                            }[finding.severity] || "text-zinc-400 bg-zinc-800/40 border-zinc-700/40";
+
+                            return (
+                              <div key={idx} className="py-3 first:pt-0 last:pb-0">
+                                <div className="flex items-start gap-3">
+                                  <span className={cn("px-1.5 py-0.5 text-[10px] font-bold uppercase rounded border", sevColor)}>
+                                    {finding.severity}
+                                  </span>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-medium text-zinc-200">{finding.title}</p>
+                                    <p className="text-xs text-zinc-500 mt-0.5 font-mono">
+                                      {finding.file}
+                                      {finding.line ? `:${finding.line}` : ""}
+                                      <span className="ml-2 text-zinc-600">{finding.control_id}</span>
+                                    </p>
+                                    <p className="text-xs text-zinc-400 mt-1.5 leading-relaxed">{finding.description}</p>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </Card>
+                    )}
+
+                    {/* Issues created */}
+                    {scanResult.issues_created.length > 0 && (
+                      <Card>
+                        <CardHeader
+                          title={`Issues Created (${scanResult.issues_created.length})`}
+                          description="Click Issues tab to see all open issues"
+                        />
+                        <div className="space-y-1">
+                          {scanResult.issues_created.map((iss, idx) => (
+                            <div key={idx} className="flex items-center gap-2 p-2 bg-zinc-800/30 rounded text-xs">
+                              <AlertCircle size={12} className="text-yellow-400 flex-shrink-0" />
+                              <span className="text-zinc-300 truncate">{iss.title}</span>
+                              <Badge size="sm" variant={
+                                iss.severity === "critical" ? "danger"
+                                  : iss.severity === "high" ? "warning"
+                                  : "neutral"
+                              }>
+                                {iss.severity}
+                              </Badge>
+                            </div>
+                          ))}
+                        </div>
+                      </Card>
+                    )}
+
+                    {scanResult.error && (
+                      <Card className="border-yellow-900/50">
+                        <div className="flex items-start gap-2">
+                          <AlertTriangle size={14} className="text-yellow-400 flex-shrink-0 mt-0.5" />
+                          <p className="text-xs text-zinc-400">{scanResult.error}</p>
+                        </div>
+                      </Card>
+                    )}
+                  </>
+                )}
+
+                {/* Empty state */}
+                {!scanResult && !scanRunning && !scanError && (
+                  <Card>
+                    <div className="text-center py-12">
+                      <ScanSearch size={40} className="text-zinc-700 mx-auto mb-4" />
+                      <p className="text-sm text-zinc-400">
+                        Run a compliance scan to check this repo&apos;s code against its bound policy controls.
+                      </p>
+                      <p className="text-xs text-zinc-600 mt-2">
+                        The AI will read source files, evaluate them against each control, and create issues for violations.
+                      </p>
+                    </div>
+                  </Card>
                 )}
               </div>
             )}
