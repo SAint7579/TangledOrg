@@ -38,7 +38,7 @@ function PreviewNode({ data }: NodeProps) {
       className="px-2 py-1 rounded border text-center"
       style={{
         borderColor: d.borderColor ?? "#3b82f6",
-        backgroundColor: "rgb(21,21,26)",
+        backgroundColor: "var(--node-bg)",
         minWidth: 80,
       }}
     >
@@ -46,7 +46,7 @@ function PreviewNode({ data }: NodeProps) {
       <Handle type="source" position={Position.Bottom} style={{ opacity: 0, width: 0, height: 0 }} />
       <Handle type="target" position={Position.Left} style={{ opacity: 0, width: 0, height: 0 }} id="left" />
       <Handle type="source" position={Position.Right} style={{ opacity: 0, width: 0, height: 0 }} id="right" />
-      <span className="text-[9px] font-mono font-medium text-zinc-300 truncate block max-w-[100px]">{d.label}</span>
+      <span className="text-[9px] font-mono font-medium truncate block max-w-[100px]" style={{ color: "var(--node-text)" }}>{d.label}</span>
     </div>
   );
 }

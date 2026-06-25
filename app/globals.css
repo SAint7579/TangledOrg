@@ -146,6 +146,9 @@ html:not(.dark) .hsb-main .bg-zinc-900\/40 {
 html:not(.dark) .hsb-main .bg-zinc-900\/60 {
   background-color: rgba(21, 21, 26, 0.04) !important;
 }
+html:not(.dark) .hsb-main .bg-zinc-900 {
+  background-color: rgba(255, 255, 255, 0.8) !important;
+}
 /* bg-zinc-800 with no opacity modifier (used by inline tag badges) */
 html:not(.dark) .hsb-main .bg-zinc-800 { background-color: rgba(21, 21, 26, 0.06) !important; }
 html:not(.dark) .hsb-main .bg-zinc-800\/20 { background-color: rgba(21, 21, 26, 0.03) !important; }
