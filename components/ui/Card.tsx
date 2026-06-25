@@ -16,23 +16,37 @@ interface CardHeaderProps {
 export function Card({ children, className, padding = true }: CardProps) {
   return (
     <div
-      className={cn(
-        "border border-zinc-800 bg-zinc-900/40",
-        padding && "p-4",
-        className
-      )}
+      className={cn("border transition-colors", padding && "p-4", className)}
+      style={{
+        borderColor: "var(--border-subtle)",
+        backgroundColor: "var(--card-bg)",
+      }}
     >
       {children}
     </div>
   );
 }
 
-export function CardHeader({ title, description, action, className }: CardHeaderProps) {
+export function CardHeader({
+  title,
+  description,
+  action,
+  className,
+}: CardHeaderProps) {
   return (
     <div className={cn("flex items-start justify-between gap-2 mb-4", className)}>
       <div>
-        <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-widest">{title}</h3>
-        {description && <p className="text-xs text-zinc-600 mt-0.5">{description}</p>}
+        <h3
+          className="text-xs font-semibold uppercase tracking-widest"
+          style={{ color: "var(--text-secondary)" }}
+        >
+          {title}
+        </h3>
+        {description && (
+          <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
+            {description}
+          </p>
+        )}
       </div>
       {action && <div className="flex-shrink-0">{action}</div>}
     </div>

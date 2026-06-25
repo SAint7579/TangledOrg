@@ -14,11 +14,16 @@ interface ShellProps {
 
 export function Shell({ children, breadcrumbs, notificationCount }: ShellProps) {
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100">
+    <div
+      className="min-h-screen transition-colors duration-200"
+      style={{ backgroundColor: "var(--bg-main)", color: "var(--text-primary)" }}
+    >
       <Sidebar />
-      <div className="pl-[240px]">
+
+      {/* pl-14 = 56px = collapsed sidebar width */}
+      <div className="pl-14">
         <Header breadcrumbs={breadcrumbs} notificationCount={notificationCount} />
-        <main className="p-6">{children}</main>
+        <main className="p-6 hsb-main">{children}</main>
       </div>
     </div>
   );
