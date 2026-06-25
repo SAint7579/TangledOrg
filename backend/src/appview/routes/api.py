@@ -439,12 +439,12 @@ async def get_repo_tree(rkey: str, request: Request, ref: str = "main", path: st
     repo_rec = _get_repo_record(rkey)
     val = repo_rec["value"]
     knot = val.get("knot", "")
-    repo_did = val.get("repoDid", "")
+    owner_did = _get_org_session()["did"]
 
     if not knot:
         raise HTTPException(status_code=400, detail="Repo has no knot server configured")
 
-    params: dict[str, str] = {"repo": f"{repo_did}/{rkey}", "ref": ref}
+    params: dict[str, str] = {"repo": f"{owner_did}/{rkey}", "ref": ref}
     if path:
         params["path"] = path
 
@@ -463,12 +463,12 @@ async def get_repo_log(rkey: str, request: Request, ref: str = "main", limit: in
     repo_rec = _get_repo_record(rkey)
     val = repo_rec["value"]
     knot = val.get("knot", "")
-    repo_did = val.get("repoDid", "")
+    owner_did = _get_org_session()["did"]
 
     if not knot:
         raise HTTPException(status_code=400, detail="Repo has no knot server configured")
 
-    params: dict[str, str | int] = {"repo": f"{repo_did}/{rkey}", "ref": ref, "limit": limit}
+    params: dict[str, str | int] = {"repo": f"{owner_did}/{rkey}", "ref": ref, "limit": limit}
 
     try:
         resp = httpx.get(f"https://{knot}/xrpc/sh.tangled.repo.log", params=params, timeout=10)
